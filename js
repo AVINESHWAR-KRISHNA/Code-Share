@@ -3,7 +3,6 @@ const path = require('path');
 const requestp = require('request-promise');
 const platformClient = require('purecloud-platform-client-v2');
 const { createLogger, transports, format } = require('winston');
-const { Script } = require('vm');
 
 // Create the log directory
 const logDir = 'JS_LOGS';
@@ -32,45 +31,46 @@ const client = platformClient.ApiClient.instance;
 client.setEnvironment(platformClient.PureCloudRegionHosts.us_west_2);
 client.setAccessToken(client.authData.accessToken);
 
-const exportContactList = function exportContactList(contactListId, outputPath) {
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const exportContactList = async function exportContactList(contactListId, outputPath) {
     logger.info('Exporting contact list...');
 
     const outboundApi = new platformClient.OutboundApi();
-    outboundApi.getOutboundContactlistExport(contactListId, { download: 'false' })
-        .then((res) => {
-            const downloadUri = res.uri;
-            logger.info(JSON.stringify({ uri: downloadUri, headers: { 'Authorization': `bearer ${client.authData.accessToken}` } }));
+    try {
+        const res = await outboundApi.getOutboundContactlistExport(contactListId, { download: 'false' });
+        const downloadUri = res.uri;
+        logger.info(JSON.stringify({ uri: downloadUri, headers: { 'Authorization': `bearer ${client.authData.accessToken}` } }));
 
-            // Add a timer before making the requestp call
-            setTimeout(() => {
-                return requestp({
-                    uri: downloadUri,
-                    headers: {
-                        'Authorization': `bearer ${client.authData.accessToken}`
-                    }
-                });
-            }, 100000);
-        })
-        .then((res) => {
-            logger.info('Export contents retrieved');
+        // Add a timer of 2 minutes (120 seconds)
+        await delay(120000);
 
-            fs.writeFile(outputPath, res, (err) => {
-                if (err) {
-                    logger.error('Failed to write export contents:', err);
-                } else {
-                    logger.info('Contents exported successfully');
-                    logger.info('Process Completed Successfully.\n');
-                    logger.info('------------------------------------------------------------------------------------------------------------');
-                }
-            });
-        })
-        .catch((err) => {
-            logger.error('Failed to export contact list:', err);
-            if (err.body && err.body.code === 'no.available.list_export_uri') {
-                logger.info('Waiting for export...');
-                setTimeout(() => exportContactList(contactListId, outputPath), 5000);
+        const result = await requestp({
+            uri: downloadUri,
+            headers: {
+                'Authorization': `bearer ${client.authData.accessToken}`
             }
         });
+
+        logger.info('Export contents retrieved');
+
+        fs.writeFile(outputPath, result, (err) => {
+            if (err) {
+                logger.error('Failed to write export contents:', err);
+            } else {
+                logger.info('Contents exported successfully');
+                logger.info('Process Completed Successfully.\n');
+                logger.info('------------------------------------------------------------------------------------------------------------');
+            }
+        });
+    } catch (err) {
+        logger.error('Failed to export contact list:', err);
+        if (err.body && err.body.code === 'no.available.list_export_uri') {
+            logger.info('Waiting for export...');
+            await delay(5000);
+            await exportContactList(contactListId, outputPath);
+        }
+    }
 };
 
 // Read command-line arguments or use default values
