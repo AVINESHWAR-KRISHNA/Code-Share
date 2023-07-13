@@ -1,56 +1,97 @@
+import sys
+import pyodbc
+import pandas as pd
+import numpy as np
+from sqlalchemy import create_engine,text, bindparam
+import concurrent.futures
+import gc
+gc.enable()
 
-2023-07-13 14:56:47,179 - distributed.protocol.pickle - ERROR - Failed to serialize <ToPickle: HighLevelGraph with 1 layers.
-<dask.highlevelgraph.HighLevelGraph object at 0x1c680010820>
- 0. 1954192685376
->.
-Traceback (most recent call last):
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\distributed\protocol\pickle.py", line 77, in dumps 
-    result = cloudpickle.dumps(x, **dump_kwargs)
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 73, in dumps
-    cp.dump(obj)
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 632, in dump
-    return Pickler.dump(self, obj)
-TypeError: cannot pickle 'sqlalchemy.cprocessors.UnicodeResultProcessor' object
 
-During handling of the above exception, another exception occurred:
+SERVER_NAME ='DEVCONTWCOR01.r1rcm.tech'
+DATABASE ='Srdial'
+DRIVER = 'SQL+Server'
+TABLE_NAME = 'MFS_Export_GenesysRaw'
+FTP = r'C:\Users\IN10011418\OneDrive - R1\Desktop\MFS-TestData.csv'
+MAX_THREADS = 25
+CHUNK_SIZE = 1000
 
-Traceback (most recent call last):
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\distributed\protocol\pickle.py", line 81, in dumps 
-    result = cloudpickle.dumps(x, **dump_kwargs)
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 73, in dumps
-    cp.dump(obj)
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 632, in dump
-    return Pickler.dump(self, obj)
-TypeError: cannot pickle 'sqlalchemy.cprocessors.UnicodeResultProcessor' object
-Traceback (most recent call last):
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\distributed\protocol\pickle.py", line 77, in dumps
-    result = cloudpickle.dumps(x, **dump_kwargs)
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 73, in dumps
-    cp.dump(obj)
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 632, in dump
-    return Pickler.dump(self, obj)
-TypeError: cannot pickle 'sqlalchemy.cprocessors.UnicodeResultProcessor' object
+insert_records_failure_flag_counter = 0
+rows_inserted = 0
+insertion_err = ''
+insert_records_failure_flag = True
 
-During handling of the above exception, another exception occurred:
+try:
+ 
+    ENGINE = create_engine(f'mssql+pyodbc://{SERVER_NAME}/{DATABASE}?driver={DRIVER}',fast_executemany=True)
 
-Traceback (most recent call last):
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\distributed\protocol\serialize.py", line 350, in serialize
-    header, frames = dumps(x, context=context) if wants_context else dumps(x)
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\distributed\protocol\serialize.py", line 73, in pickle_dumps
-    frames[0] = pickle.dumps(
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\distributed\protocol\pickle.py", line 81, in dumps
-    result = cloudpickle.dumps(x, **dump_kwargs)
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 73, in dumps
-    cp.dump(obj)
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 632, in dump
-    return Pickler.dump(self, obj)
-TypeError: cannot pickle 'sqlalchemy.cprocessors.UnicodeResultProcessor' object
+except Exception as e:
 
-The above exception was the direct cause of the following exception:
+    print(f"Unable to connect to server :: {SERVER_NAME} err_msg :: {e}.")
 
-Traceback (most recent call last):
-  File "c:\Users\IN10011418\OneDrive - R1\Scripts\PYTHON\Sample.py", line 537, in <module>
-    futures = client.map(insert_records, chunks)
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\distributed\protocol\serialize.py", line 372, in serialize
-    raise TypeError(msg, str(x)[:10000]) from exc
-TypeError: ('Could not serialize object of type HighLevelGraph', '<ToPickle: HighLevelGraph with 1 layers.\n<dask.highlevelgraph.HighLevelGraph object at 0x1c680010820>\n 0. 1954192685376\n>')
+
+
+def insert_records(chunk):
+
+    try:
+        global rows_inserted, insert_records_failure_flag,insertion_err,insert_records_failure_flag_counter
+
+        cnx = ENGINE.connect()
+
+        chunk = chunk.rename(columns=lambda x: x.replace('-', ''))
+        chunk.fillna('NULL', inplace=True)
+
+        float_columns = chunk.select_dtypes(include='float').columns
+        chunk[float_columns] = chunk[float_columns].replace([np.inf, -np.inf], np.nan)
+        chunk[float_columns] = chunk[float_columns].astype(pd.Int64Dtype())
+
+        insert_query = f"INSERT INTO {TABLE_NAME} ({', '.join(chunk.columns)}) VALUES ({', '.join([':' + col for col in chunk.columns])})"
+
+        with cnx.begin() as transaction:
+            stmt = text(insert_query)
+            stmt = stmt.bindparams(*[bindparam(col) for col in chunk.columns])
+            cnx.execute(stmt, chunk.to_dict(orient='records'))
+            transaction.commit()
+        
+        cnx.close()
+        rows_inserted += len(chunk)
+
+    except Exception as e:
+        print(e)
+        insertion_err += str(e)
+        insert_records_failure_flag_counter += 1
+
+        print(f"Unable to insert data in table :: {TABLE_NAME}. err_msg :: {insertion_err}")
+
+def create_chunk(df):
+
+    global insertion_err
+
+    chunks = [df[i:i+CHUNK_SIZE] for i in range(0, len(df), CHUNK_SIZE)]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+
+        futures = []
+
+        for chunk in chunks:
+            future = executor.submit(insert_records,chunk)
+            futures.append(future)
+
+        for future in concurrent.futures.as_completed(futures):
+            print(future)
+    
+    print(f"Data inserted successfully into table :: {TABLE_NAME}.")
+    print(f"Total number of rows inserted :: {rows_inserted}.")
+
+
+if __name__ == '__main__':
+
+    matching_file = FTP
+
+    if matching_file:
+        df = pd.read_csv(matching_file,sep=',')
+        create_chunk(df)
+    else:
+        print("No file found. Sys exit.")
+        sys.exit(1) 
+        
