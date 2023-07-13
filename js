@@ -1,55 +1,97 @@
-import dask.dataframe as dd
-import pyodbc
+import sys
+import pandas as pd
+import numpy as np
+from sqlalchemy import create_engine,text, bindparam
+import concurrent.futures
+import gc
+gc.enable()
 
-# Define your SQL Server connection details
-server = '<server_name>'
-database = '<database_name>'
-username = '<username>'
-password = '<password>'
-table_name = '<table_name>'
 
-# Define Dask options for optimization
-dask_optimizations = {
-    'assume_missing': True,  # Assume missing values
-    'low_memory': True,  # Optimize memory usage
-    'dtype': str,  # Use string type for all columns
-}
+SERVER_NAME ='DEVCONTWCOR01.r1rcm.tech'
+DATABASE ='Srdial'
+DRIVER = 'SQL+Server'
+TABLE_NAME = 'MFS_Export_GenesysRaw'
+FTP = r'C:\Users\IN10011418\OneDrive - R1\Desktop\MFS-TestData.csv'
+MAX_THREADS = 25
+CHUNK_SIZE = 1000
 
-# Read the CSV file using Dask
-df = dd.read_csv('data.csv', **dask_optimizations)
+insert_records_failure_flag_counter = 0
+rows_inserted = 0
+insertion_err = ''
+insert_records_failure_flag = True
 
-# Connect to the SQL Server
-conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}"
-conn = pyodbc.connect(conn_str)
+try:
+    ENGINE = create_engine(f'mssql+pyodbc://{SERVER_NAME}/{DATABASE}?driver={DRIVER}',fast_executemany=True)
 
-# Create the cursor
-cursor = conn.cursor()
+except Exception as e:
 
-# Create the table if it doesn't exist
-create_table_query = f"CREATE TABLE IF NOT EXISTS {table_name} (column1 datatype1, column2 datatype2, ...)"
-cursor.execute(create_table_query)
-conn.commit()
+    print(f"Unable to connect to server :: {SERVER_NAME} err_msg :: {e}.")
+    sys.exit(1)
 
-# Insert data into the table
-with cursor.fast_executemany = True:
-    # Iterate over each partition of the Dask DataFrame
-    for partition in df.partitions:
-        # Convert the Dask DataFrame partition to a pandas DataFrame
-        partition = partition.compute()
 
-        # Convert NaN values to None to match SQL Server NULL semantics
-        partition = partition.where(partition.notnull(), None)
+def insert_records(chunk):
 
-        # Convert the pandas DataFrame to a list of tuples
-        data = [tuple(row) for row in partition.to_records(index=False)]
+    try:
+        global rows_inserted, insert_records_failure_flag,insertion_err,insert_records_failure_flag_counter
 
-        # Generate the insert query with parameter placeholders
-        insert_query = f"INSERT INTO {table_name} (column1, column2, ...) VALUES (?, ?, ...)"
+        cnx = ENGINE.connect()
 
-        # Execute the insert query with the data
-        cursor.executemany(insert_query, data)
-        conn.commit()
+        print(cnx)
 
-# Close the cursor and connection
-cursor.close()
-conn.close()
+        chunk = chunk.rename(columns=lambda x: x.replace('-', ''))
+        chunk.fillna('NULL', inplace=True)
+
+        float_columns = chunk.select_dtypes(include='float').columns
+        chunk[float_columns] = chunk[float_columns].replace([np.inf, -np.inf], np.nan)
+        chunk[float_columns] = chunk[float_columns].astype(pd.Int64Dtype())
+
+        insert_query = f"INSERT INTO {TABLE_NAME} ({', '.join(chunk.columns)}) VALUES ({', '.join([':' + col for col in chunk.columns])})"
+
+        with cnx.begin() as transaction:
+            stmt = text(insert_query)
+            stmt = stmt.bindparams(*[bindparam(col) for col in chunk.columns])
+            cnx.execute(stmt, chunk.to_dict('records'))
+            transaction.commit()
+        
+        cnx.close()
+        rows_inserted += len(chunk)
+
+    except Exception as e:
+        print(e)
+        insertion_err += str(e)
+        insert_records_failure_flag_counter += 1
+
+        print(f"Unable to insert data in table :: {TABLE_NAME}. err_msg :: {insertion_err}")
+
+def create_chunk(df):
+
+    global insertion_err
+
+    chunks = [df[i:i+CHUNK_SIZE] for i in range(0, len(df), CHUNK_SIZE)]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+
+        futures = []
+
+        for chunk in chunks:
+            future = executor.submit(insert_records,chunk)
+            futures.append(future)
+
+        for future in concurrent.futures.as_completed(futures):
+            print(future)
+    
+    print(f"Data inserted successfully into table :: {TABLE_NAME}.")
+    print(f"Total number of rows inserted :: {rows_inserted}.")
+
+
+if __name__ == '__main__':
+
+    matching_file = FTP
+
+    if matching_file:
+        df = pd.read_csv(matching_file,sep=',')
+        create_chunk(df)
+    else:
+        print("No file found. Sys exit.")
+        sys.exit(1) 
+        
