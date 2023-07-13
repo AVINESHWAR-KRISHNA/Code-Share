@@ -1,15 +1,14 @@
 import sys
 import pyodbc
-import pandas as pd
-import numpy as np
-from sqlalchemy import create_engine,text, bindparam
+import vaex
+from sqlalchemy import create_engine, text, bindparam
 import concurrent.futures
 import gc
 gc.enable()
 
 
-SERVER_NAME ='DEVCONTWCOR01.r1rcm.tech'
-DATABASE ='Srdial'
+SERVER_NAME = 'DEVCONTWCOR01.r1rcm.tech'
+DATABASE = 'Srdial'
 DRIVER = 'SQL+Server'
 TABLE_NAME = 'MFS_Export_GenesysRaw'
 FTP = r'C:\Users\IN10011418\OneDrive - R1\Desktop\MFS-TestData.csv'
@@ -22,19 +21,14 @@ insertion_err = ''
 insert_records_failure_flag = True
 
 try:
- 
-    ENGINE = create_engine(f'mssql+pyodbc://{SERVER_NAME}/{DATABASE}?driver={DRIVER}',fast_executemany=True)
-
+    ENGINE = create_engine(f'mssql+pyodbc://{SERVER_NAME}/{DATABASE}?driver={DRIVER}', fast_executemany=True)
 except Exception as e:
-
     print(f"Unable to connect to server :: {SERVER_NAME} err_msg :: {e}.")
 
 
-
 def insert_records(chunk):
-
     try:
-        global rows_inserted, insert_records_failure_flag,insertion_err,insert_records_failure_flag_counter
+        global rows_inserted, insert_records_failure_flag, insertion_err, insert_records_failure_flag_counter
 
         cnx = ENGINE.connect()
 
@@ -45,14 +39,14 @@ def insert_records(chunk):
         chunk[float_columns] = chunk[float_columns].replace([np.inf, -np.inf], np.nan)
         chunk[float_columns] = chunk[float_columns].astype(pd.Int64Dtype())
 
-        insert_query = f"INSERT INTO {TABLE_NAME} ({', '.join(chunk.columns)}) VALUES ({', '.join([':' + col for col in chunk.columns])})"
+        insert_query = f"INSERT INTO {TABLE_NAME} ({', '.join(chunk.columns)}) VALUES ({', '.join(['?' for _ in chunk.columns])})"
 
-        with cnx.begin() as transaction:
-            stmt = text(insert_query)
-            stmt = stmt.bindparams(*[bindparam(col) for col in chunk.columns])
-            cnx.execute(stmt, chunk.to_dict(orient='records'))
-            transaction.commit()
+        values = [tuple(row) for row in chunk.to_numpy()]
         
+        with cnx.begin() as transaction:
+            cnx.execute(insert_query, values)
+            transaction.commit()
+
         cnx.close()
         rows_inserted += len(chunk)
 
@@ -63,35 +57,31 @@ def insert_records(chunk):
 
         print(f"Unable to insert data in table :: {TABLE_NAME}. err_msg :: {insertion_err}")
 
-def create_chunk(df):
 
+def create_chunk(df):
     global insertion_err
 
-    chunks = [df[i:i+CHUNK_SIZE] for i in range(0, len(df), CHUNK_SIZE)]
+    chunks = [df[i:i + CHUNK_SIZE] for i in range(0, len(df), CHUNK_SIZE)]
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
-
         futures = []
 
         for chunk in chunks:
-            future = executor.submit(insert_records,chunk)
+            future = executor.submit(insert_records, chunk)
             futures.append(future)
 
         for future in concurrent.futures.as_completed(futures):
             print(future)
-    
+
     print(f"Data inserted successfully into table :: {TABLE_NAME}.")
     print(f"Total number of rows inserted :: {rows_inserted}.")
 
 
 if __name__ == '__main__':
-
     matching_file = FTP
 
     if matching_file:
-        df = pd.read_csv(matching_file,sep=',')
+        df = vaex.from_csv(matching_file, convert=True)
         create_chunk(df)
     else:
         print("No file found. Sys exit.")
-        sys.exit(1) 
-        
