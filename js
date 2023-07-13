@@ -1,73 +1,56 @@
-import dask.dataframe as dd
-from dask.distributed import Client, LocalCluster
-from sqlalchemy import create_engine, text, bindparam
-import numpy as np
-import pandas as pd
-import os
 
-# Update the database connection details
-SERVER_NAME = 'DEVCONTWCOR01.r1rcm.tech'
-DATABASE = 'Srdial'
-DRIVER = 'SQL+Server'
-TABLE_NAME = 'MFS_Export_GenesysRaw'
-FTP = r'C:\Users\IN10011418\OneDrive - R1\Desktop\MFS-TestData.csv'
-CHUNK_SIZE = 10000
-MAX_THREADS = 25
+2023-07-13 14:56:47,179 - distributed.protocol.pickle - ERROR - Failed to serialize <ToPickle: HighLevelGraph with 1 layers.
+<dask.highlevelgraph.HighLevelGraph object at 0x1c680010820>
+ 0. 1954192685376
+>.
+Traceback (most recent call last):
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\distributed\protocol\pickle.py", line 77, in dumps 
+    result = cloudpickle.dumps(x, **dump_kwargs)
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 73, in dumps
+    cp.dump(obj)
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 632, in dump
+    return Pickler.dump(self, obj)
+TypeError: cannot pickle 'sqlalchemy.cprocessors.UnicodeResultProcessor' object
 
-# Define the insert_records function
-def insert_records(chunk):
-    try:
-        global rows_inserted, insert_records_failure_flag, insertion_err, insert_records_failure_flag_counter
+During handling of the above exception, another exception occurred:
 
-        chunk = chunk.rename(columns=lambda x: x.replace('-', ''))
-        chunk.fillna('NULL', inplace=True)
+Traceback (most recent call last):
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\distributed\protocol\pickle.py", line 81, in dumps 
+    result = cloudpickle.dumps(x, **dump_kwargs)
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 73, in dumps
+    cp.dump(obj)
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 632, in dump
+    return Pickler.dump(self, obj)
+TypeError: cannot pickle 'sqlalchemy.cprocessors.UnicodeResultProcessor' object
+Traceback (most recent call last):
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\distributed\protocol\pickle.py", line 77, in dumps
+    result = cloudpickle.dumps(x, **dump_kwargs)
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 73, in dumps
+    cp.dump(obj)
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 632, in dump
+    return Pickler.dump(self, obj)
+TypeError: cannot pickle 'sqlalchemy.cprocessors.UnicodeResultProcessor' object
 
-        float_columns = chunk.select_dtypes(include='float').columns
-        chunk[float_columns] = chunk[float_columns].replace([np.inf, -np.inf], np.nan)
-        chunk[float_columns] = chunk[float_columns].astype(pd.Int64Dtype())
+During handling of the above exception, another exception occurred:
 
-        insert_query = f"INSERT INTO {TABLE_NAME} ({', '.join(chunk.columns)}) VALUES ({', '.join([':' + col for col in chunk.columns])})"
+Traceback (most recent call last):
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\distributed\protocol\serialize.py", line 350, in serialize
+    header, frames = dumps(x, context=context) if wants_context else dumps(x)
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\distributed\protocol\serialize.py", line 73, in pickle_dumps
+    frames[0] = pickle.dumps(
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\distributed\protocol\pickle.py", line 81, in dumps
+    result = cloudpickle.dumps(x, **dump_kwargs)
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 73, in dumps
+    cp.dump(obj)
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\cloudpickle\cloudpickle_fast.py", line 632, in dump
+    return Pickler.dump(self, obj)
+TypeError: cannot pickle 'sqlalchemy.cprocessors.UnicodeResultProcessor' object
 
-        # Use SQLAlchemy to execute the insert query
-        with ENGINE.connect() as cnx:
-            stmt = text(insert_query)
-            stmt = stmt.bindparams(*[bindparam(col) for col in chunk.columns])
-            cnx.execute(stmt, chunk.to_dict(orient='records'))
+The above exception was the direct cause of the following exception:
 
-        rows_inserted += len(chunk)
-
-    except Exception as e:
-        print(e)
-        insertion_err += str(e)
-        insert_records_failure_flag_counter += 1
-
-        print(f"Unable to insert data in table :: {TABLE_NAME}. err_msg :: {insertion_err}")
-
-
-if __name__ == '__main__':
-    # Create a Dask cluster
-    cluster = LocalCluster()
-    client = Client(cluster)
-
-    # Update the database connection details
-    conn_str = f'mssql+pyodbc://{SERVER_NAME}/{DATABASE}?driver={DRIVER}'
-    os.environ['DATABASE_URL'] = conn_str
-
-    # Create the SQLAlchemy engine
-    ENGINE = create_engine(os.environ['DATABASE_URL'], fast_executemany=True)
-
-    # Load the CSV file as a Dask DataFrame
-    df = dd.read_csv(FTP)
-
-    # Convert Dask DataFrame to Pandas DataFrame
-    df = df.compute()
-
-    # Split the DataFrame into chunks
-    chunks = [df[i:i + CHUNK_SIZE] for i in range(0, len(df), CHUNK_SIZE)]
-
-    # Submit each chunk for parallel processing
+Traceback (most recent call last):
+  File "c:\Users\IN10011418\OneDrive - R1\Scripts\PYTHON\Sample.py", line 537, in <module>
     futures = client.map(insert_records, chunks)
-    client.gather(futures)
-
-    print(f"Data inserted successfully into table :: {TABLE_NAME}.")
-    print(f"Total number of rows inserted :: {rows_inserted}.")
+  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\distributed\protocol\serialize.py", line 372, in serialize
+    raise TypeError(msg, str(x)[:10000]) from exc
+TypeError: ('Could not serialize object of type HighLevelGraph', '<ToPickle: HighLevelGraph with 1 layers.\n<dask.highlevelgraph.HighLevelGraph object at 0x1c680010820>\n 0. 1954192685376\n>')
