@@ -4,6 +4,7 @@ import pandas as pd
 import os
 from sqlalchemy import create_engine, text, bindparam
 from dask.distributed import Client
+from dask.diagnostics import ProgressBar
 
 # Update the database connection details
 SERVER_NAME ='DEVCONTWCOR01.r1rcm.tech'
@@ -84,6 +85,7 @@ if __name__ == '__main__':
         insertion_err = ""
         insert_records_failure_flag_counter = 0
 
-        create_chunk(df)
+        with ProgressBar():
+            create_chunk(df)
     else:
         print("No file found. Sys exit.")
