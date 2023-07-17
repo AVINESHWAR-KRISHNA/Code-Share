@@ -31,13 +31,16 @@ def load_data_chunk(chunk_data, table_name, conn_str):
         print(f"An error occurred: {str(e)}")
 
 
-def load_csv_to_sql_server(csv_file, table_name, server, database, username, password):
+def load_csv_to_sql_server(csv_file, table_name, server, database):
     try:
         # Load CSV data into a pandas DataFrame
-        df = pd.read_csv(csv_file)
+        df = pd.read_csv(csv_file, sep=',',low_memory=False)
+        df = df.astype(str)
+        df = df.rename(columns=lambda x: x.replace('-', ''))
+        df.fillna('NULL', inplace=True)
 
         # Establish a connection string to SQL Server
-        conn_str = f'DRIVER={{SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}'
+        conn_str = f'DRIVER={{SQL Server}};SERVER={server};DATABASE={database};Trusted_Connection=yes;'
 
         # Calculate the chunk size to divide the data into equal parts for parallel processing
         chunk_size = len(df) // NUM_THREADS
@@ -55,11 +58,9 @@ def load_csv_to_sql_server(csv_file, table_name, server, database, username, pas
 
 
 if __name__ == "__main__":
-    csv_file_path = "path/to/your/csv_file.csv"
-    table_name = "your_table_name"
-    server = "your_sql_server_name"
-    database = "your_database_name"
-    username = "your_username"
-    password = "your_password"
+    csv_file_path = r'C:\Users\IN10011418\OneDrive - R1\Desktop\MFS-TestData.csv'
+    table_name = 'MFS_Export_GenesysRaw'
+    server = 'DEVCONTWCOR01.r1rcm.tech'
+    database ='Srdial'
 
-    load_csv_to_sql_server(csv_file_path, table_name, server, database, username, password)
+    load_csv_to_sql_server(csv_file_path, table_name, server, database)
