@@ -1,51 +1,65 @@
-import vaex
-from sqlalchemy import create_engine, Column, Integer, String, Float
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+import pandas as pd
+import pyodbc
 from concurrent.futures import ThreadPoolExecutor
 
-# Define the CSV file path and SQL Server connection details
-csv_file_path = 'path/to/large_data.csv'
-sql_server_connection = 'mssql+pyodbc://username:password@server_name/database_name?driver=ODBC+Driver+17+for+SQL+Server'
+# Number of threads to use for parallel processing
+NUM_THREADS = 4  # You can adjust this based on your system's capabilities
 
-# Create a SQLAlchemy engine and session
-Base = declarative_base()
-engine = create_engine(sql_server_connection)
-Session = sessionmaker(bind=engine)
+def load_data_chunk(chunk_data, table_name, conn_str):
+    try:
+        conn = pyodbc.connect(conn_str)
+        cursor = conn.cursor()
 
-# Define the SQL Server table schema using SQLAlchemy ORM
-class LargeData(Base):
-    __tablename__ = 'large_data'
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    col1 = Column(String)
-    col2 = Column(Float)
-    # Add more columns as needed
+        # Create a comma-separated list of column names to use in the SQL query
+        columns = ', '.join([f'[{col}]' for col in chunk_data.columns])
 
-# Function to load a chunk of data into the SQL Server table
-def load_chunk(chunk):
-    session = Session()
-    session.bulk_save_objects(chunk)
-    session.commit()
-    session.close()
+        # Prepare the SQL query with parameter placeholders
+        params = ','.join(['?' for _ in chunk_data.columns])
+        query = f'INSERT INTO [{table_name}] ({columns}) VALUES ({params})'
 
-# Function to load the entire CSV file into the SQL Server table using Vaex and parallel processing
-def load_large_csv_to_sql(file_path, chunk_size=100000, num_workers=4):
-    # Load the CSV file using Vaex
-    df = vaex.from_csv(file_path, convert=True)
+        # Prepare data for bulk insert
+        data = [tuple(row) for _, row in chunk_data.iterrows()]
 
-    # Define the chunk size and calculate the number of chunks
-    num_rows = len(df)
-    num_chunks = (num_rows + chunk_size - 1) // chunk_size
+        # Execute bulk insert
+        cursor.executemany(query, data)
 
-    # Split the Vaex DataFrame into chunks
-    chunks = [df[i*chunk_size:(i+1)*chunk_size] for i in range(num_chunks)]
+        # Commit the changes and close the connection
+        conn.commit()
+        conn.close()
 
-    # Create the SQL Server table if it doesn't exist
-    Base.metadata.create_all(engine)
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
 
-    # Load the chunks into the SQL Server table using concurrent processing
-    with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        executor.map(load_chunk, chunks)
+
+def load_csv_to_sql_server(csv_file, table_name, server, database, username, password):
+    try:
+        # Load CSV data into a pandas DataFrame
+        df = pd.read_csv(csv_file)
+
+        # Establish a connection string to SQL Server
+        conn_str = f'DRIVER={{SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}'
+
+        # Calculate the chunk size to divide the data into equal parts for parallel processing
+        chunk_size = len(df) // NUM_THREADS
+
+        # Divide the DataFrame into chunks for parallel processing
+        chunks = [df.iloc[i:i + chunk_size] for i in range(0, len(df), chunk_size)]
+
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
+            executor.map(load_data_chunk, chunks, [table_name] * NUM_THREADS, [conn_str] * NUM_THREADS)
+
+        print("Data loaded successfully.")
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+
 
 if __name__ == "__main__":
-    load_large_csv_to_sql(csv_file_path)
+    csv_file_path = "path/to/your/csv_file.csv"
+    table_name = "your_table_name"
+    server = "your_sql_server_name"
+    database = "your_database_name"
+    username = "your_username"
+    password = "your_password"
+
+    load_csv_to_sql_server(csv_file_path, table_name, server, database, username, password)
