@@ -1,28 +1,33 @@
-
+import configparser
 import pandas as pd
 import pyodbc
 from sqlalchemy import create_engine
 
+# Read the configuration from config.ini
+config = configparser.ConfigParser()
+config.read('config.ini')
+
 # Connection settings for SQL Server
-server_name = 'your_server_name'
-database_name = 'your_database_name'
-table_name = 'your_table_name'
-username = 'your_username'
-password = 'your_password'
+server_name = config.get('DATABASE', 'server_name')
+database_name = config.get('DATABASE', 'database_name')
+table_name = config.get('DATABASE', 'table_name')
+username = config.get('DATABASE', 'username')
+password = config.get('DATABASE', 'password')
 
 # Connection string for SQL Server
 conn_str = f"DRIVER={{SQL Server}};SERVER={server_name};DATABASE={database_name};UID={username};PWD={password}"
 engine = create_engine(f"mssql+pyodbc:///?odbc_connect={conn_str}")
 
 # Path to your large CSV file
-csv_file_path = 'path/to/your/large_file.csv'
+csv_file_path = config.get('CSV', 'file_path')
 
 # Chunk size for reading the CSV file
 chunk_size = 10000
 
-# Define the column names in the CSV file (replace with your actual column names)
-# It's essential to specify the correct order of columns in the CSV file and the table.
-column_names = ['column1', 'column2', 'column3', ...]
+# Get the column names from the CSV file header
+with open(csv_file_path, 'r') as csv_file:
+    first_line = csv_file.readline().strip()
+    column_names = first_line.split(',')
 
 # Iterate through the CSV file in chunks and insert into the SQL Server table
 for chunk in pd.read_csv(csv_file_path, chunksize=chunk_size):
