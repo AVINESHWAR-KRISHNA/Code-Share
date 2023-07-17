@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, insert, MetaData, Table, Column, Integer, String
+from sqlalchemy import create_engine, insert, MetaData, Table, Column, Integer, String, Float
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 import numpy as np
@@ -19,10 +19,24 @@ try:
 except Exception as e:
     print(f"Unable to connect to server :: {SERVER_NAME} err_msg :: {e}.")
 
-# Fetch table metadata from SQL Server and create the dynamic Table object
-def fetch_table_metadata(engine, table_name):
+def create_dynamic_table(df, table_name):
     metadata = MetaData()
-    table = Table(table_name, metadata, autoload=True, autoload_with=engine)
+    columns = []
+    
+    # Analyze the data types of the columns
+    for column_name, column_data in df.dtypes.items():
+        if column_data == np.int64:
+            col = Column(column_name, Integer)
+        elif column_data == np.float64:
+            col = Column(column_name, Float)
+        else:
+            col = Column(column_name, String)
+        columns.append(col)
+
+    # Create the dynamic table
+    table = Table(table_name, metadata, *columns)
+    metadata.create_all(ENGINE)
+    
     return table
 
 def insert_records(chunk, table):
@@ -74,11 +88,14 @@ if __name__ == '__main__':
     if matching_file:
         df = pd.read_csv(matching_file, sep=',', low_memory=False)
 
-        # Fetch the table metadata and create the dynamic Table object
-        table_name = 'MFS_Export_GenesysRaw'  # Replace with the actual table name
-        table = fetch_table_metadata(ENGINE, table_name)
+        # Ask the user for the table name or use a default name
+        table_name = input("Enter the table name: ") or 'DynamicTable'
 
-        create_chunk(df, table)
+        # Create a dynamic table based on the CSV data
+        dynamic_table = create_dynamic_table(df, table_name)
+
+        # Insert the data into the dynamic table
+        create_chunk(df, dynamic_table)
     else:
         print("No file found. Sys exit.")
         sys.exit(1)
