@@ -2,7 +2,7 @@
 import sys
 import pandas as pd
 import numpy as np
-from sqlalchemy import create_engine,text, bindparam,MetaData,Table,insert
+from sqlalchemy import create_engine,text, bindparam
 import concurrent.futures
 import gc
 gc.enable()
@@ -46,13 +46,11 @@ def insert_records(chunk):
 
         insert_query = f"INSERT INTO {TABLE_NAME} ({', '.join(chunk.columns)}) VALUES ({', '.join([':' + col for col in chunk.columns])})"
 
-        with ENGINE.connect() as connection:
-            metadata = MetaData()
-            table = Table(TABLE_NAME, metadata, autoload_with=ENGINE)
-
-            values_list = chunk.to_dict(orient='records')
-            ins = insert(table).values(values_list)
-            connection.execute(ins)
+        with cnx.begin() as transaction:
+            stmt = text(insert_query)
+            stmt = stmt.bindparams(*[bindparam(col) for col in chunk.columns])
+            cnx.execute(stmt, chunk.to_dict(orient='records'))
+            transaction.commit()
         
         cnx.close()
         rows_inserted += len(chunk)
@@ -106,14 +104,3 @@ if __name__ == '__main__':
 ['inin-outbound-id', 'cqRecordId', 'cqCampName', 'cqCampId', 'cqCampOrder', 'cqSourceDB', 'cqAppName', 'cqAppRecordId', 'cqFacility', 'cqAccountNum', 'cqFirstName', 'cqLastName', 'cqStateCode', 'cqZipCode', 'cqPhoneHome', 'cqPhoneWork', 'cqPhoneMobile', 'cqTimeZoneCode', 'cqDayLightFlag', 'cqFlag', 'cqNotes', 'cqDestination', 'WeightScore', 'ContactCallable', 'ContactableByVoice', 'ContactableBySms', 'ContactableByEmail', 'ZipCodeAutomaticTimeZone', 'CallRecordLastAttempt-cqPhoneHome', 'CallRecordLastResult-cqPhoneHome', 'CallRecordLastAgentWrapup-cqPhoneHome', 'SmsLastAttempt-cqPhoneHome', 'SmsLastResult-cqPhoneHome', 'Callable-cqPhoneHome', 'ContactableByVoice-cqPhoneHome', 'ContactableBySms-cqPhoneHome', 'AutomaticTimeZone-cqPhoneHome', 'CallRecordLastAttempt-cqPhoneWork', 'CallRecordLastResult-cqPhoneWork', 'CallRecordLastAgentWrapup-cqPhoneWork', 'SmsLastAttempt-cqPhoneWork', 'SmsLastResult-cqPhoneWork', 'Callable-cqPhoneWork', 'ContactableByVoice-cqPhoneWork', 'ContactableBySms-cqPhoneWork', 'AutomaticTimeZone-cqPhoneWork', 'CallRecordLastAttempt-cqPhoneMobile', 'CallRecordLastResult-cqPhoneMobile', 'CallRecordLastAgentWrapup-cqPhoneMobile', 'SmsLastAttempt-cqPhoneMobile', 'SmsLastResult-cqPhoneMobile', 'Callable-cqPhoneMobile', 'ContactableByVoice-cqPhoneMobile', 'ContactableBySms-cqPhoneMobile', 'AutomaticTimeZone-cqPhoneMobile']
 Inserting data into table :: MFS_Export_GenesysRaw.
 '''
-
-err_msg :: (pyodbc.Error) ('HY104', '[HY104] [Microsoft][ODBC SQL Server Driver]Invalid precision value (0) (SQLBindParameter)')
-[SQL: SELECT [INFORMATION_SCHEMA].[COLUMNS].[COLUMN_NAME], [INFORMATION_SCHEMA].[COLUMNS].[DATA_TYPE], [INFORMATION_SCHEMA].[COLUMNS].[IS_NULLABLE], [INFORMATION_SCHEMA].[COLUMNS].[CHARACTER_MAXIMUM_LENGTH], [INFORMATION_SCHEMA].[COLUMNS].[NUMERIC_PRECISION], [INFORMATION_SCHEMA].[COLUMNS].[NUMERIC_SCALE], [INFORMATION_SCHEMA].[COLUMNS].[COLUMN_DEFAULT], [INFORMATION_SCHEMA].[COLUMNS].[COLLATION_NAME], sys.computed_columns.definition, sys.computed_columns.is_persisted, 
-sys.identity_columns.is_identity, CAST(sys.identity_columns.seed_value AS NUMERIC) AS seed_value, CAST(sys.identity_columns.increment_value AS NUMERIC) AS increment_value, CAST(sys.extended_properties.value AS NVARCHAR(max)) AS comment 
-FROM [INFORMATION_SCHEMA].[COLUMNS] LEFT OUTER JOIN sys.computed_columns ON sys.computed_columns.object_id = object_id([INFORMATION_SCHEMA].[COLUMNS].[TABLE_SCHEMA] + CAST(? AS NVARCHAR(max)) + [INFORMATION_SCHEMA].[COLUMNS].[TABLE_NAME]) AND sys.computed_columns.name = ([INFORMATION_SCHEMA].[COLUMNS].[COLUMN_NAME] COLLATE DATABASE_DEFAULT) LEFT OUTER JOIN sys.identity_columns ON sys.identity_columns.object_id = object_id([INFORMATION_SCHEMA].[COLUMNS].[TABLE_SCHEMA] + 
-CAST(? AS NVARCHAR(max)) + [INFORMATION_SCHEMA].[COLUMNS].[TABLE_NAME]) AND sys.identity_columns.name = ([INFORMATION_SCHEMA].[COLUMNS].[COLUMN_NAME] COLLATE 
-DATABASE_DEFAULT) LEFT OUTER JOIN sys.extended_properties ON sys.extended_properties.class = ? AND sys.extended_properties.major_id = object_id([INFORMATION_SCHEMA].[COLUMNS].[TABLE_SCHEMA] + CAST(? AS NVARCHAR(max)) + [INFORMATION_SCHEMA].[COLUMNS].[TABLE_NAME]) AND sys.extended_properties.minor_id = [INFORMATION_SCHEMA].[COLUMNS].[ORDINAL_POSITION] AND sys.extended_properties.name = CAST(? AS NVARCHAR(max)) 
-WHERE [INFORMATION_SCHEMA].[COLUMNS].[TABLE_NAME] = CAST(? AS NVARCHAR(max)) AND [INFORMATION_SCHEMA].[COLUMNS].[TABLE_SCHEMA] = CAST(? AS NVARCHAR(max)) ORDER BY [INFORMATION_SCHEMA].[COLUMNS].[ORDINAL_POSITION]]
-[parameters: ('.', '.', 1, '.', 'MS_Description', 'MFS_Export_GenesysRaw', 'dbo')]
-(Background on this error at: https://sqlalche.me/e/20/dbapi)
-<Future at 0x123b315e130 state=finished returned NoneType>
