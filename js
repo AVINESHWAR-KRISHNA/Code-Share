@@ -1,5 +1,6 @@
 import pandas as pd
 import pyodbc
+from concurrent.futures import ThreadPoolExecutor
 
 # Number of tasks to use for parallel processing
 NUM_TASKS = 30  # You can adjust this based on your system's capabilities
@@ -47,8 +48,10 @@ def load_csv_to_sql_server(csv_file, table_name, server, database):
         # Divide the DataFrame into chunks for parallel processing
         chunks = [df.iloc[i:i + chunk_size] for i in range(0, len(df), chunk_size)]
 
-        for chunk in chunks:
-            load_data_chunk(chunk, table_name, conn_str)
+        with ThreadPoolExecutor(max_workers=NUM_TASKS) as executor:
+            futures = [executor.submit(load_data_chunk, chunk, table_name, conn_str) for chunk in chunks]
+            for future in futures:
+                future.result()
 
         print("Data loaded successfully.")
     except Exception as e:
