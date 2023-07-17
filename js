@@ -1,24 +1,69 @@
+import pandas as pd
+from sqlalchemy import create_engine, MetaData, Table, Column, String, Integer
+from sqlalchemy.orm import declarative_base, sessionmaker
+from concurrent.futures import ThreadPoolExecutor
 
+def create_sqlalchemy_engine(SERVER_NAME, DATABASE, DRIVER):
+    connection_string = f"mssql+pyodbc://{SERVER_NAME}/{DATABASE}?driver={DRIVER}',fast_executemany=True"
+    engine = create_engine(connection_string)
+    return engine
 
-Traceback (most recent call last):
-  File "c:\Users\IN10011418\OneDrive - R1\Scripts\PYTHON\Sample.py", line 512, in <module>
+def create_table(engine, TABLE_NAME, csv_columns):
+    Base = declarative_base()
+    metadata = MetaData()
+
+    class CustomTable(Base):
+        __table__ = Table(
+            TABLE_NAME,
+            metadata,
+            Column('id', Integer, primary_key=True, autoincrement=True),
+            *(Column(column, String(length=255)) for column in csv_columns)
+        )
+
+    Base.metadata.create_all(engine)
+    return CustomTable
+
+def dump_csv_to_table(engine, table, data):
+    Session = sessionmaker(bind=engine)
+    session = Session()
+
+    mapped_data = [table(**row) for row in data]
+    session.bulk_save_objects(mapped_data)
+    session.commit()
+    session.close()
+
+def process_chunk(chunk, engine, table_class):
+    with engine.connect() as conn:
+        with conn.begin():
+            dump_csv_to_table(engine, table_class, chunk)
+
+def dump_csv_to_sql_table_parallel(SERVER_NAME, DATABASE, DRIVER, TABLE_NAME, FTP, CHUNK_SIZE=100000, MAX_THREADS=4):
+    engine = create_sqlalchemy_engine(SERVER_NAME, DATABASE, DRIVER)
+    with open(FTP, 'r', newline='', encoding='utf-8') as file:
+        df = pd.read_csv(file, sep=',', low_memory=False)
+        csv_columns = df.columns.tolist()
+
+    table_class = create_table(engine, TABLE_NAME, csv_columns)
+
+    with open(FTP, 'r', newline='', encoding='utf-8') as file:
+        csv_data = pd.read_csv(file, chunksize=CHUNK_SIZE)
+
+        with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+            futures = []
+            for chunk in csv_data:
+                data = chunk.astype(str).to_dict(orient='records')
+                futures.append(executor.submit(process_chunk, data, engine, table_class))
+
+            for future in futures:
+                future.result()
+
+if __name__ == "__main__":
     dump_csv_to_sql_table_parallel(
-  File "c:\Users\IN10011418\OneDrive - R1\Scripts\PYTHON\Sample.py", line 509, in dump_csv_to_sql_table_parallel
-    future.result()
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\concurrent\futures\_base.py", line 439, in result
-    return self.__get_result()
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\concurrent\futures\_base.py", line 391, in __get_result
-    raise self._exception
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\concurrent\futures\thread.py", line 58, in run
-    result = self.fn(*self.args, **self.kwargs)
-  File "c:\Users\IN10011418\OneDrive - R1\Scripts\PYTHON\Sample.py", line 489, in process_chunk
-    dump_csv_to_table(engine, table, chunk)
-  File "c:\Users\IN10011418\OneDrive - R1\Scripts\PYTHON\Sample.py", line 482, in dump_csv_to_table
-    session.bulk_insert_mappings(table, data)
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\sqlalchemy\orm\session.py", line 4479, in bulk_insert_mappings
-    self._bulk_save_mappings(
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\sqlalchemy\orm\session.py", line 4541, in _bulk_save_mappings
-    mapper = _class_to_mapper(mapper)
-  File "C:\Users\IN10011418\AppData\Local\Programs\Python\Python39\lib\site-packages\sqlalchemy\orm\base.py", line 445, in _class_to_mapper
-    return insp.mapper  # type: ignore
-AttributeError: 'Table' object has no attribute 'mapper'
+        SERVER_NAME='DEVCONTWCOR01.r1rcm.tech',
+        DATABASE='Srdial',
+        DRIVER='SQL+Server',
+        TABLE_NAME='MFS_Export_GenesysRaw',
+        FTP='C:/Users/IN10011418/OneDrive - R1/Desktop/MFS-Test.csv',
+        MAX_THREADS=25,
+        CHUNK_SIZE=100000
+    )
