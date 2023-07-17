@@ -1,66 +1,106 @@
+
+import sys
 import pandas as pd
-import pyodbc
-from concurrent.futures import ThreadPoolExecutor
+import numpy as np
+from sqlalchemy import create_engine,text, bindparam, insert
+import concurrent.futures
+import gc
+gc.enable()
 
-# Number of tasks to use for parallel processing
-NUM_TASKS = 30  # You can adjust this based on your system's capabilities
 
-def load_data_chunk(chunk_data, table_name, conn_str):
+SERVER_NAME ='DEVCONTWCOR01.r1rcm.tech'
+DATABASE ='Srdial'
+DRIVER = 'SQL+Server'
+TABLE_NAME = 'MFS_Export_GenesysRaw'
+FTP = 'C:/Users/IN10011418/OneDrive - R1/Desktop/MFS-Test.csv'
+MAX_THREADS = 25
+CHUNK_SIZE = 100000
+
+
+insert_records_failure_flag_counter = 0
+rows_inserted = 0
+insertion_err = ''
+insert_records_failure_flag = True
+
+try:
+    ENGINE = create_engine(f'mssql+pyodbc://{SERVER_NAME}/{DATABASE}?driver={DRIVER}',fast_executemany=True)
+
+except Exception as e:
+
+    print(f"Unable to connect to server :: {SERVER_NAME} err_msg :: {e}.")
+
+
+def insert_records(chunk):
+
     try:
-        conn = pyodbc.connect(conn_str)
-        cursor = conn.cursor()
+        global rows_inserted, insert_records_failure_flag,insertion_err,insert_records_failure_flag_counter
 
-        # Create a comma-separated list of column names to use in the SQL query
-        columns = ', '.join([f'[{col}]' for col in chunk_data.columns])
+        cnx = ENGINE.connect()
 
-        # Prepare the SQL query with parameter placeholders
-        params = ','.join(['?' for _ in chunk_data.columns])
-        query = f'INSERT INTO [{table_name}] ({columns}) VALUES ({params})'
+        chunk = chunk.rename(columns=lambda x: x.replace('-', ''))
+        chunk.fillna('NULL', inplace=True)
 
-        # Prepare data for bulk insert
-        data = [tuple(row) for _, row in chunk_data.iterrows()]
+        float_columns = chunk.select_dtypes(include='float').columns
+        chunk[float_columns] = chunk[float_columns].replace([np.inf, -np.inf], np.nan)
+        chunk[float_columns] = chunk[float_columns].astype(pd.Int64Dtype())
 
-        # Execute bulk insert with fast_executemany to improve speed
-        cursor.fast_executemany = True
-        cursor.executemany(query, data)
+        insert_query = f"INSERT INTO {TABLE_NAME} ({', '.join(chunk.columns)}) VALUES ({', '.join([':' + col for col in chunk.columns])})"
 
-        # Commit the changes and close the connection
-        conn.commit()
-        conn.close()
+        with cnx.begin() as transaction:
+            stmt = text(insert_query)
+            stmt = stmt.bindparams(*[bindparam(col) for col in chunk.columns])
+            cnx.execute(stmt, chunk.to_dict(orient='records'))
+            transaction.commit()
+        
+        cnx.close()
+        rows_inserted += len(chunk)
 
     except Exception as e:
-        print(f"An error occurred: {str(e)}")
 
-def load_csv_to_sql_server(csv_file, table_name, server, database):
-    try:
-        # Load CSV data into a pandas DataFrame
-        df = pd.read_csv(csv_file, sep=',', low_memory=False)
-        df = df.astype(str)
-        df = df.rename(columns=lambda x: x.replace('-', ''))
-        df.fillna('NULL', inplace=True)
+        insertion_err += str(e)
 
-        # Establish a connection string to SQL Server
-        conn_str = f'DRIVER={{SQL Server}};SERVER={server};DATABASE={database};Trusted_Connection=yes;'
+        insert_records_failure_flag_counter += 1
 
-        # Calculate the chunk size to divide the data into equal parts for parallel processing
-        chunk_size = len(df) // NUM_TASKS
+        print(f"Unable to insert data in table :: {TABLE_NAME}. err_msg :: {insertion_err}")
 
-        # Divide the DataFrame into chunks for parallel processing
-        chunks = [df.iloc[i:i + chunk_size] for i in range(0, len(df), chunk_size)]
 
-        with ThreadPoolExecutor(max_workers=NUM_TASKS) as executor:
-            futures = [executor.submit(load_data_chunk, chunk, table_name, conn_str) for chunk in chunks]
-            for future in futures:
-                future.result()
+def create_chunk(df):
 
-        print("Data loaded successfully.")
-    except Exception as e:
-        print(f"An error occurred: {str(e)}")
+    global insertion_err
 
-if __name__ == "__main__":
-    csv_file_path = r'C:\Users\IN10011418\OneDrive - R1\Desktop\MFS-Test.csv'
-    table_name = 'MFS_Export_GenesysRaw'
-    server = 'DEVCONTWCOR01.r1rcm.tech'
-    database = 'Srdial'
+    chunks = [df[i:i+CHUNK_SIZE] for i in range(0, len(df), CHUNK_SIZE)]
 
-    load_csv_to_sql_server(csv_file_path, table_name, server, database)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+
+        futures = []
+
+        print(f"Inserting data into table :: {TABLE_NAME}.")
+
+        for chunk in chunks:
+            future = executor.submit(insert_records,chunk)
+            futures.append(future)
+
+        for future in concurrent.futures.as_completed(futures):
+            print(future)
+
+    print(f"Total number of rows inserted :: {rows_inserted}.")
+
+
+if __name__ == '__main__':
+
+    matching_file = FTP
+
+    if matching_file:
+        df = pd.read_csv(matching_file,sep=',', low_memory=False)
+        
+        create_chunk(df)
+
+    else:
+        
+        print("No file found. Sys exit.")
+        sys.exit(1) 
+        
+'''
+['inin-outbound-id', 'cqRecordId', 'cqCampName', 'cqCampId', 'cqCampOrder', 'cqSourceDB', 'cqAppName', 'cqAppRecordId', 'cqFacility', 'cqAccountNum', 'cqFirstName', 'cqLastName', 'cqStateCode', 'cqZipCode', 'cqPhoneHome', 'cqPhoneWork', 'cqPhoneMobile', 'cqTimeZoneCode', 'cqDayLightFlag', 'cqFlag', 'cqNotes', 'cqDestination', 'WeightScore', 'ContactCallable', 'ContactableByVoice', 'ContactableBySms', 'ContactableByEmail', 'ZipCodeAutomaticTimeZone', 'CallRecordLastAttempt-cqPhoneHome', 'CallRecordLastResult-cqPhoneHome', 'CallRecordLastAgentWrapup-cqPhoneHome', 'SmsLastAttempt-cqPhoneHome', 'SmsLastResult-cqPhoneHome', 'Callable-cqPhoneHome', 'ContactableByVoice-cqPhoneHome', 'ContactableBySms-cqPhoneHome', 'AutomaticTimeZone-cqPhoneHome', 'CallRecordLastAttempt-cqPhoneWork', 'CallRecordLastResult-cqPhoneWork', 'CallRecordLastAgentWrapup-cqPhoneWork', 'SmsLastAttempt-cqPhoneWork', 'SmsLastResult-cqPhoneWork', 'Callable-cqPhoneWork', 'ContactableByVoice-cqPhoneWork', 'ContactableBySms-cqPhoneWork', 'AutomaticTimeZone-cqPhoneWork', 'CallRecordLastAttempt-cqPhoneMobile', 'CallRecordLastResult-cqPhoneMobile', 'CallRecordLastAgentWrapup-cqPhoneMobile', 'SmsLastAttempt-cqPhoneMobile', 'SmsLastResult-cqPhoneMobile', 'Callable-cqPhoneMobile', 'ContactableByVoice-cqPhoneMobile', 'ContactableBySms-cqPhoneMobile', 'AutomaticTimeZone-cqPhoneMobile']
+Inserting data into table :: MFS_Export_GenesysRaw.
+'''
