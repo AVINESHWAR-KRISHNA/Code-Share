@@ -1,51 +1,67 @@
 import pandas as pd
-
-# Step 1: Read the CSV file into a pandas DataFrame
-csv_file_path = "path_to_your_csv_file.csv"
-df = pd.read_csv(csv_file_path)
-
-# Step 2: Remove hyphens from column names
-df.columns = df.columns.str.replace('-', '')
-
-# Step 3: Save the modified DataFrame to a new CSV file
-modified_csv_file_path = "path_to_modified_csv_file.csv"
-df.to_csv(modified_csv_file_path, index=False)
-
-# Now you have a new CSV file with column names without hyphens that you can use with the SQL Server script.
-
-# Step 4: Execute the SQL Server script with the modified CSV file using your preferred method.
-# You can use a SQL Server client or a Python library like pyodbc to execute the SQL script with the modified CSV file as follows:
-
 import pyodbc
+from concurrent.futures import ThreadPoolExecutor
 
-# Replace the connection details with your actual SQL Server credentials and server information
-server = 'your_server_name'
-database = 'your_database_name'
-username = 'your_username'
-password = 'your_password'
+# Number of threads to use for parallel processing
+NUM_THREADS = 30  # You can adjust this based on your system's capabilities
 
-# Establish a connection to the SQL Server database
-conn_str = f'DRIVER={{SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password};'
-conn = pyodbc.connect(conn_str)
+def load_data_chunk(chunk_data, table_name, conn_str):
+    try:
+        conn = pyodbc.connect(conn_str)
+        cursor = conn.cursor()
 
-# Define the SQL Server script with the BULK INSERT logic
-sql_script = f'''
-USE [{database}]
-BULK INSERT [table_name]
-FROM '{modified_csv_file_path}'
-WITH (
-    FORMAT = 'CSV',
-    FIRSTROW = 2,
-    FIELDQUOTE = '"',
-    FIELDTERMINATOR = ';',
-    ROWTERMINATOR = '0x0a'
-);
-'''
+        # Create a comma-separated list of column names to use in the SQL query
+        columns = ', '.join([f'[{col}]' for col in chunk_data.columns])
 
-# Execute the SQL script
-with conn.cursor() as cursor:
-    cursor.execute(sql_script)
-    conn.commit()
+        # Prepare the SQL query with parameter placeholders
+        params = ','.join(['?' for _ in chunk_data.columns])
+        query = f'INSERT INTO [{table_name}] ({columns}) VALUES ({params})'
 
-# Close the connection
-conn.close()
+        # Prepare data for bulk insert
+        data = [tuple(row) for _, row in chunk_data.iterrows()]
+
+        # Execute bulk insert
+        
+        cursor.executemany(query, data)
+
+        # Commit the changes and close the connection
+        conn.commit()
+        conn.close()
+
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+
+
+def load_csv_to_sql_server(csv_file, table_name, server, database):
+    try:
+        # Load CSV data into a pandas DataFrame
+        df = pd.read_csv(csv_file, sep=',',low_memory=False)
+        df = df.astype(str)
+        df = df.rename(columns=lambda x: x.replace('-', ''))
+        df.fillna('NULL', inplace=True)
+
+        # Establish a connection string to SQL Server
+        conn_str = f'DRIVER={{SQL Server}};SERVER={server};DATABASE={database};Trusted_Connection=yes;'
+
+        # Calculate the chunk size to divide the data into equal parts for parallel processing
+        chunk_size = len(df) // NUM_THREADS
+
+        # Divide the DataFrame into chunks for parallel processing
+        chunks = [df.iloc[i:i + chunk_size] for i in range(0, len(df), chunk_size)]
+
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
+            executor.map(load_data_chunk, chunks, [table_name] * NUM_THREADS, [conn_str] * NUM_THREADS)
+
+        print("Data loaded successfully.")
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+
+
+if __name__ == "__main__":
+    csv_file_path = r'C:\Users\IN10011418\OneDrive - R1\Desktop\MFS-Test.csv'
+    table_name = 'MFS_Export_GenesysRaw'
+    server = 'DEVCONTWCOR01.r1rcm.tech'
+    database ='Srdial'
+
+    load_csv_to_sql_server(csv_file_path, table_name, server, database)
