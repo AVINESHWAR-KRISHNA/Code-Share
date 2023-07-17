@@ -10,7 +10,7 @@ def create_sqlalchemy_engine(SERVER_NAME, DATABASE, DRIVER):
 
 def create_table(engine, TABLE_NAME, csv_columns):
     Base = declarative_base()
-    metadata = MetaData(bind=engine)
+    metadata = MetaData()
 
     class CustomTable(Base):
         __table__ = Table(
