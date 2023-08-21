@@ -1,211 +1,152 @@
+from flask import Flask, request
 from google.cloud import pubsub_v1
-import json
-import pyodbc
+from queue import Queue
 import threading
-import queue
-from tenacity import retry, stop_after_attempt
+import os
+import pandas as pd
+from sqlalchemy import create_engine, text, bindparam
+import json
+import signal
+import sys
 from concurrent.futures import ThreadPoolExecutor
 
-class PubSubToSql:
-    def __init__(self, project_id, subscription_id, server, database, username, password, table_name, min_pool_size=1, max_pool_size=5):
-        self.project_id = project_id
-        self.subscription_id = subscription_id
-        self.server = server
-        self.database = database
-        self.username = username
-        self.password = password
-        self.table_name = table_name
-        self.message_queue = queue.Queue()
-        self.min_pool_size = min_pool_size
-        self.max_pool_size = max_pool_size
+SERVER_NAME = ''
+DATABASE = ''
+DRIVER = 'SQL+Server'
+TABLE_NAME = ''
+credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credentials_path
+topic_path = os.getenv("PUBSUB_TOPIC_PATH")
+subscription_path =  os.getenv("PUBSUB_SUBSCRIPTION_PATH")
+database_url = f'mssql+pyodbc://{SERVER_NAME}/{DATABASE}?driver={DRIVER}'
 
-        self.conn_pool = pyodbc.pooling.SimpleConnectionPool(self.min_pool_size, self.max_pool_size, f'DRIVER={{SQL Server}};SERVER={self.server};DATABASE={self.database};UID={self.username};PWD={self.password}')
+app = Flask(__name__)
+message_queue = Queue()
+connection_pool = Queue(maxsize=20)
+executor = ThreadPoolExecutor()
+start_event = threading.Event()
+NUM_THREADS = 20
 
-        self.subscriber = pubsub_v1.SubscriberClient()
-        self.subscription_path = self.subscriber.subscription_path(project_id, subscription_id)
+def initialize_connection_pool():
+    for _ in range(20):
+        engine = create_engine(database_url,fast_executemany=True)
+        connection = engine.connect()
+        connection_pool.put(connection)
 
-    @retry(stop=stop_after_attempt(3))  # Retry up to 3 times on exceptions
-    def insert_data_into_sql(self, data):
-        try:
-            conn = self.conn_pool.getconn()
-            cursor = conn.cursor()
-            for item in data:
-                cursor.execute(f"INSERT INTO {self.table_name} (column1, column2) VALUES (?, ?)",
-                               item['column1'], item['column2'])
-            conn.commit()
-        finally:
-            self.conn_pool.putconn(conn)
+def get_database_connection():
+    return connection_pool.get()
 
-    def acknowledge_message(self, message):
-        message.ack()
+def release_database_connection(connection):
+    connection_pool.put(connection)
 
-    def message_receiver(self):
-        def callback(message):
-            try:
-                data = json.loads(message.data.decode('utf-8'))
-                self.message_queue.put((data, message))  # Put data and message in the queue for processing
-            except Exception as e:
-                print(f"Error processing message: {e}")
+def callback(message):
 
-        # Subscribe to the Pub/Sub topic and start receiving messages
-        streaming_pull_future = self.subscriber.subscribe(self.subscription_path, callback=callback)
-        try:
-            streaming_pull_future.result()
-        except Exception as e:
-            print(f"Error in message_receiver: {e}")
+    message_queue.put(message.data)
+    message.ack()
 
-    def data_processor(self):
-        while True:
-            data, message = self.message_queue.get()  # Get data and message from the queue
-            if data is not None:
-                try:
-                    self.insert_data_into_sql(data)
-                    self.acknowledge_message(message)  # Acknowledge successful message processing
-                except Exception as e:
-                    print(f"Error processing data: {e}")
-                    # Handle error and retry logic here
+@app.route('/', methods=['POST'])
+def publish_message():
+    try:
+        data = json.dumps(request.json)
+        data = data.encode('utf-8')
 
-    def start_processing(self, num_processing_threads=10):
-        # Create and start threads for message receiving and data processing
-        receiver_thread = threading.Thread(target=self.message_receiver)
-        receiver_thread.start()
+        # print(f"Received data: {data}")
+        attributes = {
+            "client": "SSM",
+            "eventType": "Update"
+        }
+        future = publisher.publish(topic_path, data, **attributes)
+        print(f"Published message with ID: {future.result()}")
+        return future.result()
+    except Exception as e:
+        print(f"Error publishing message: {str(e)}")
+        return "Error"
 
-        # Create a ThreadPoolExecutor for data processing
-        with ThreadPoolExecutor(max_workers=num_processing_threads) as executor:  # You can adjust the number of workers as needed
-            executor.map(self.data_processor)
+def normalize_data(data):
+    normalized_data = []
 
-if __name__ == "__main__":
-    project_id = 'your-project-id'
-    subscription_id = 'your-subscription-id'
-    server = 'your-sql-server'
-    database = 'your-database'
-    username = 'your-username'
-    password = 'your-password'
-    table_name = 'your-table-name'
+    for item in data:
+        row = {}
 
-    num_instances = 3  # Number of instances to run
+        for key, value in item.items():
+            if isinstance(value, dict):
+                for sub_key, sub_value in value.items():
+                    row[f"{key}_{sub_key}"] = sub_value
+            elif isinstance(value, list):
+                for idx, sub_item in enumerate(value, start=1):
+                    if isinstance(sub_item, dict):
+                        for sub_key, sub_value in sub_item.items():
+                            if isinstance(sub_value, dict):
+                                for sub_sub_key, sub_sub_value in sub_value.items():
+                                    row[f"{key}_{idx}_{sub_key}_{sub_sub_key}"] = sub_sub_value
+                            else:
+                                row[f"{key}_{idx}_{sub_key}"] = sub_value
+                    else:
+                        row[f"{key}_{idx}"] = sub_item
+            else:
+                row[key] = value
 
-    with ThreadPoolExecutor(max_workers=num_instances) as executor:
-        for _ in range(num_instances):
-            pubsub_to_sql = PubSubToSql(project_id, subscription_id, server, database, username, password, table_name)
-            executor.submit(pubsub_to_sql.start_processing)
+        normalized_data.append(row)
+    return normalized_data
 
+def process_message(DATA):
 
-from google.cloud import pubsub_v1
-import json
-import pyodbc
-import threading
-import queue
-from tenacity import retry, stop_after_attempt
-from concurrent.futures import ThreadPoolExecutor
-import time
-from prometheus_client import start_http_server, Counter
+    z = json.loads(DATA.decode('utf-8'))
 
-class PubSubToSql:
-    def __init__(self, project_id, subscription_id, server, database, username, password, table_name, min_pool_size=1, max_pool_size=5):
-        self.project_id = project_id
-        self.subscription_id = subscription_id
-        self.server = server
-        self.database = database
-        self.username = username
-        self.password = password
-        self.table_name = table_name
-        self.message_queue = queue.Queue()
-        self.min_pool_size = min_pool_size
-        self.max_pool_size = max_pool_size
+    try:
+        N_DATA = normalize_data(z)
+    except:
+        N_DATA = normalize_data([z])
 
-        self.conn_pool = pyodbc.pooling.SimpleConnectionPool(self.min_pool_size, self.max_pool_size, f'DRIVER={{SQL Server}};SERVER={self.server};DATABASE={self.database};UID={self.username};PWD={self.password}')
+    df = pd.DataFrame(data=N_DATA)
+    df = df.astype(str)
 
-        self.subscriber = pubsub_v1.SubscriberClient()
-        self.subscription_path = self.subscriber.subscription_path(project_id, subscription_id)
+    cnx = get_database_connection()
 
-        self.shutdown_requested = False
+    insert_query = f"INSERT INTO {TABLE_NAME} ({', '.join(df.columns)}) VALUES ({', '.join([':' + col for col in df.columns])})"
+    try:
+        with cnx.begin() as transaction:
+            stmt = text(insert_query)
+            stmt = stmt.bindparams(*[bindparam(col) for col in df.columns])
+            cnx.execute(stmt, df.to_dict(orient='records'))
+            transaction.commit()
+    
+        release_database_connection(cnx)
+        print(f"Data inserted successfully")
 
-        # Configure logging
-        self._configure_logging()
+    except Exception as e:
+        print(e)
 
-        # Configure Prometheus metrics
-        self._configure_metrics()
+def process_messages():
 
-    def _configure_logging(self):
-        import logging
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
+    start_event.wait()
+    while True:
+        DATA = message_queue.get()
+        executor.submit(process_message, DATA)
 
-    def _configure_metrics(self):
-        start_http_server(8000)  # Start Prometheus metrics server on port 8000
-
-        # Define metrics
-        self.processed_messages_counter = Counter('processed_messages', 'Number of processed messages')
-        self.message_processing_errors_counter = Counter('message_processing_errors', 'Number of message processing errors')
-
-    @retry(stop=stop_after_attempt(3))  # Retry up to 3 times on exceptions
-    def insert_data_into_sql(self, data):
-        try:
-            conn = self.conn_pool.getconn()
-            cursor = conn.cursor()
-            for item in data:
-                cursor.execute(f"INSERT INTO {self.table_name} (column1, column2) VALUES (?, ?)",
-                               item['column1'], item['column2'])
-            conn.commit()
-        finally:
-            self.conn_pool.putconn(conn)
-
-    def acknowledge_message(self, message):
-        message.ack()
-
-    def message_receiver(self):
-        def callback(message):
-            try:
-                if not self.shutdown_requested:
-                    data = json.loads(message.data.decode('utf-8'))
-                    self.message_queue.put((data, message))  # Put data and message in the queue for processing
-            except Exception as e:
-                self.logger.error(f"Error processing message: {e}", exc_info=True)
-
-        # Subscribe to the Pub/Sub topic and start receiving messages
-        streaming_pull_future = self.subscriber.subscribe(self.subscription_path, callback=callback)
-        try:
-            streaming_pull_future.result()
-        except Exception as e:
-            self.logger.error(f"Error in message_receiver: {e}", exc_info=True)
-
-    def data_processor(self):
-        while not self.shutdown_requested:
-            data, message = self.message_queue.get()  # Get data and message from the queue
-            if data is not None:
-                try:
-                    self.insert_data_into_sql(data)
-                    self.acknowledge_message(message)  # Acknowledge successful message processing
-                    self.processed_messages_counter.inc()  # Increment processed messages count
-                except Exception as e:
-                    self.logger.error(f"Error processing data: {e}", exc_info=True)
-                    self.message_processing_errors_counter.inc()  # Increment error count
-
-            # Introduce rate limiting by sleeping between iterations
-            time.sleep(1)  # Sleep for 1 second between iterations (adjust as needed)
-
-    def start_processing(self, num_processing_threads=10):
-        # Create and start threads for message receiving and data processing
-        receiver_thread = threading.Thread(target=self.message_receiver)
-        receiver_thread.start()
-
-        # Create a ThreadPoolExecutor for data processing
-        with ThreadPoolExecutor(max_workers=num_processing_threads) as executor:  # You can adjust the number of workers as needed
-            executor.map(self.data_processor)
+# def shutdown_handler(signal, frame):
+#     print("Shutting down the application...")
+#     executor.shutdown(wait=True)
+#     sys.exit(0)
 
 if __name__ == "__main__":
-    project_id = 'your-project-id'
-    subscription_id = 'your-subscription-id'
-    server = 'your-sql-server'
-    database = 'your-database'
-    username = 'your-username'
-    password = 'your-password'
-    table_name = 'your-table-name'
+    try:
+        subscriber = pubsub_v1.SubscriberClient()
+        publisher = pubsub_v1.PublisherClient()
 
-    num_instances = 3  # Number of instances to run
+        initialize_connection_pool()
 
-    with ThreadPoolExecutor(max_workers=num_instances) as executor:
-        for _ in range(num_instances):
-            pubsub_to_sql = PubSubToSql(project_id, subscription_id, server, database, username, password, table_name)
-            executor.submit(pubsub_to_sql.start_processing)
+        future = subscriber.subscribe(subscription_path, callback=callback)
+
+        for _ in range(NUM_THREADS):
+            queue_thread = threading.Thread(target=process_messages)
+            queue_thread.start()
+
+        start_event.set()
+        
+        # signal.signal(signal.SIGINT, shutdown_handler)
+        # signal.signal(signal.SIGTERM, shutdown_handler)
+
+        app.run(port=8000, debug=True)
+    except Exception as e:
+        print(f"Error starting the application: {str(e)}")
