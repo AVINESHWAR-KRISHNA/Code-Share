@@ -119,23 +119,35 @@ class PubSubToSql:
     def acknowledge_message(self, message):
         message.ack()
 
+    @app.route('/', methods=['POST'])
+    def receive_message():
+        try:
+            if not pubsub_to_sql.shutdown_requested:
+                data = json.loads(request.data.decode('utf-8'))
+                pubsub_to_sql.message_queue.put((data, None))  # Put data in the queue for processing
+
+                # Publish the message
+                data = json.dumps(data)
+                data = data.encode('utf-8')
+
+                attributes = {
+                    "client": "SSM",
+                    "eventType": "Update"
+                }
+                future = pubsub_to_sql.publisher.publish(pubsub_to_sql.topic_path, data, **attributes)
+                print(f"Published message with ID: {future.result()}")
+                return future.result()
+
+        except Exception as e:
+            pubsub_to_sql.logger.error(f"Error processing message: {e}", exc_info=True)
+            return "Error"
+
     def message_receiver(self):
         def callback(message):
             try:
                 if not self.shutdown_requested:
                     data = json.loads(message.data.decode('utf-8'))
                     self.message_queue.put((data, message))
-
-                    # Publish the message
-                    data = json.dumps(data)
-                    data = data.encode('utf-8')
-
-                    attributes = {
-                        "client": "SSM",
-                        "eventType": "Update"
-                    }
-                    future = self.publisher.publish(self.topic_path, data, **attributes)
-                    print(f"Published message with ID: {future.result()}")
 
             except Exception as e:
                 self.logger.error(f"Error processing message: {e}", exc_info=True)
