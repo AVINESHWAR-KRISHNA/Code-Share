@@ -8,10 +8,10 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event, Lock
 
 MIN_WORKERS = 2
-MAX_WORKERS = 15
+MAX_WORKERS = 10
 
 POOL_SIZE = 2
-MAX_OVERFLOW = 15
+MAX_OVERFLOW = 10
 POOL_TIMEOUT = 90
 POOL_RECYCLE = 900
 
@@ -51,16 +51,8 @@ def Mapping_Connection(MAP_DF):
     if not MAP_DF.empty:
         for index, row in MAP_DF.iterrows():
             Name = row[0]
-            try:
-                Engine = create_engine('mssql+pyodbc://'+Server+'/'+Database+'?driver=ODBC+Driver+17+for+SQL+Server;Trusted_Connection=yes',
-                    fast_executemany=True,
-                    pool_size=POOL_SIZE,
-                    max_overflow=MAX_OVERFLOW,
-                    pool_timeout=POOL_TIMEOUT,
-                    pool_recycle=POOL_RECYCLE
-                )
-                
-                MAPPING_CONNECTIONS[Name] = Engine.connect()
+            try:    
+                MAPPING_CONNECTIONS[Name] = Connection(row[1], row[2])
             
             except Exception as e:
                 print(e)
@@ -106,7 +98,27 @@ def Distribute_Data(DF):
         Pause_Event.clear()
 
         try:
-            DF_Copy
+            
+            dfs_to_insert = [group for _, group in DF_Copy.groupby('Column_Name')]
+            
+            def insert_data(unique_value, df):
+                try:
+                    if unique_value in MAPPING_CONNECTIONS:
+                        conn = MAPPING_CONNECTIONS[unique_value]
+
+                        df[['Column_Name', 'Value']].to_sql('Sample', conn, if_exists='append', index=False) #Need to create insert into command.
+                    else:
+                        print("Mapping Connection for {0} not found.".format(unique_value))
+
+                except Exception as e:
+                    print(e)
+
+            with ThreadPoolExecutor(max_workers=len(MAPPING_CONNECTIONS)) as executor:
+                futures = [executor.submit(insert_data, df['Column_Name'].iloc[0], df) for df in dfs_to_insert]
+
+                for future in futures:
+                    future.result()
+
             DF_Copy.drop(DF_Copy.index, inplace=True) #Empty this data frame once the data is distributed.
 
         except Exception as e:
@@ -125,12 +137,9 @@ def Processing(Server, Database, Query, DF):
             df = Get_Data(Server, Database, Query)
 
             if not df.empty:
-                with DF_lock:
-                    try:
-                        DF = pd.concat([DF, df], ignore_index=True)
 
-                    except Exception as e:
-                        print(e)
+                with DF_lock:
+                    DF = pd.concat([DF, df], ignore_index=True)
 
                 busy_workers = sum(1 for thread in Executor._threads if thread.is_alive())
                 if busy_workers == Worker:
@@ -138,6 +147,9 @@ def Processing(Server, Database, Query, DF):
                     if Worker < MAX_WORKERS:
                         Worker += MIN_WORKERS
                         Executor._max_workers = Worker
+
+                Distribute_Data(DF=DF)
+
             else:
                 
                 if Worker > MIN_WORKERS:
