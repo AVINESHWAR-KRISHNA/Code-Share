@@ -1,3 +1,9 @@
-1. pysnooper
-2. black
-3. 
+1. pysnooper - Debugging prints/log the line executed
+2. black - Code Formatter
+3. git-story - Tells the story of your git project
+4. panel
+5. taipy - Web development
+6. RabbitMq Pika - Producer and consumer
+7. cProfile / memory_profiler / objgraph - mem consumption
+8. dash - 
+
