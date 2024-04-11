@@ -29,6 +29,8 @@ services:
 #kafka-topics --create --topic test-topic --bootstrap-server localhost:9092 --partitions 10 --replication-factor 1
 #kafka-topics --list --bootstrap-server localhost:9092
 
+#docker network ls
+#docker inspect docker-workspace-kafka-1 | grep IPAddress
 
 # version: '3.8'
 
