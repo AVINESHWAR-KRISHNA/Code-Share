@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    ports:
+      - "2181:2181"  # Expose ZooKeeper port
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181  # Set client port (or ZOOKEEPER_SECURE_CLIENT_PORT for secure connections)
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      - zookeeper  # Kafka depends on ZooKeeper
+    ports:
+      - "9092:9092"  # Expose Kafka port
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      ZOOKEEPER_CONNECT_STRING: zookeeper:2181  # Connect to ZooKeeper
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092  # Advertise using container name
+
+#docker-compose -f zookeeper-kafka.yml up -d
+#docker ps  
+
+
+# version: '3.8'
+
+# services:
+#   debezium-connector-sqlserver1:  # Replace with your connector name
+#     image: debezium/debezium-connector-sqlserver:1.9  # Adjust image version as needed
+#     depends_on:
+#       - kafka  # Debezium connector depends on Kafka
+#     environment:
+#       # Replace with your SQL Server connection details for server 1
+#       DATABASE_HOSTNAME: <your_sqlserver1_hostname>
+#       DATABASE_PORT: 1433
+#       DATABASE_USER: <your_sqlserver1_username>
+#       DATABASE_PASSWORD: <your_sqlserver1_password>
+#       DATABASE_NAME: <your_sqlserver1_dbname>
+#       # Optional: Specify tables to capture changes from (comma-separated list)
+#       # WHITELIST_TABLE_INCLUDE: "public.customer,public.order"
+#       # Properties for Kafka connection and topic naming
+#       OFFSET_STORAGE_TOPIC: debezium-offset-stores
+#       BOOTSTRAP_SERVERS: localhost:9092  # Connect to local Kafka instance
+#       # Set topics based on your naming convention
+#       TOPIC_PREFIX: sqlserver1-  # Use a unique prefix for server 1
