@@ -1,26 +1,75 @@
-version: '3.8'
+version: '3.4'
+
+
+networks:
+  kafka-net:
+    driver: bridge
 
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:latest
-    ports:
-      - "2181:2181"  # Expose ZooKeeper port
+    container_name: zookeeper
+
     environment:
-      ZOOKEEPER_CLIENT_PORT: 2181  # Set client port (or ZOOKEEPER_SECURE_CLIENT_PORT for secure connections)
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+    ports:
+      - '2181:2181'
 
   kafka:
     image: confluentinc/cp-kafka:latest
+
     depends_on:
-      - zookeeper  # Kafka depends on ZooKeeper
+      - zookeeper
+
     ports:
-      - "9092:9092"  # Expose Kafka port
+      - '9092:9092'
+      - '9093:9093'
+
     environment:
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      ZOOKEEPER_CONNECT_STRING: zookeeper:2181  # Connect to ZooKeeper
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092  # Advertise using container name
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"  # Set initial rebalance delay to 0
-      KAFKA_LOG_RETENTION_HOURS: "1440"  # Set log retention to 1 hour
-      KAFKA_LOG_RETENTION_BYTES: "4073741824"  # Set log retention to 4GB
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      ZOOKEEPER_SASL_ENABLED: 'false'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://localhost:9092, SSL://localhost:9093'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'PLAINTEXT:PLAINTEXT,SSL:SSL'
+      KAFKA_SSL_KEYSTORE_FILENAME: 'kafka.keystore.jks'
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: 'ssl.creds'
+      KAFKA_SSL_KEY_CREDENTIALS: 'ssl.creds'
+      KAFKA_SSL_TRUSTSTORE_FILENAME: 'kafka.truststore.jks'
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: 'ssl.creds'
+      KAFKA_SSL_CLIENT_AUTH: 'required'
+      KAFKA_SECURITY_PROTOCOL: 'SSL'
+
+    volumes:
+      - ./certs:/etc/kafka/secrets
+
+    
+
+# #!/bin/bash
+
+# # Create directory for certificates
+# mkdir -p certs
+
+# # Generate Root CA
+# openssl genrsa -out root.key 2048
+# openssl req -x509 -new -key root.key -out root.crt -days 36500 -subj "/C=IN/ST=UttarPradesh/L=Mirzapur/O=private/CN=Root CA"
+
+# # Generate Server Key and Certificate
+# openssl genrsa -out kafka.key 2048
+# openssl req -new -key kafka.key -out kafka.csr -subj "/C=IN/ST=UttarPradesh/L=Mirzapur/O=private/CN=Root CA"
+# openssl x509 -req -in kafka.csr -days 36500 -sha256 -CA root.crt -CAkey root.key -CAcreateserial -out kafka.crt
+
+# # Generate Keystores (replace passwords with strong ones)
+# storepass=$(cat ssl.creds) 
+
+# keytool -import -noprompt -keystore kafka.keystore.jks -storepass $storepass -alias rootCA -file root.crt
+# keytool -import -noprompt -keystore kafka.keystore.jks -storepass $storepass -alias kafka -file kafka.crt
+# keytool -import -noprompt -keystore client.keystore.jks -storepass $storepass -alias kafka -file kafka.crt
+
+# # Create truststore (same password as keystore)
+# keytool -import -noprompt -keystore kafka.truststore.jks -storepass $storepass -alias rootCA -file root.crt
+
 
 
 #docker-compose -f zookeeper-kafka.yml up -d
@@ -28,9 +77,16 @@ services:
 #docker exec -it docker-workspace-kafka-1 bash
 #kafka-topics --create --topic test-topic --bootstrap-server localhost:9092 --partitions 10 --replication-factor 1
 #kafka-topics --list --bootstrap-server localhost:9092
+#kafka-console-producer --broker-list localhost:9092 --topic test-topic
+#kafka-console-consumer --bootstrap-server localhost:9092 --topic test-topic --from-beginning --partition 0
+#kafka-topics --delete --topic test-topic --bootstrap-server localhost:9092
+
 
 #docker network ls
 #docker inspect docker-workspace-kafka-1 | grep IPAddress
+
+
+
 
 # version: '3.8'
 
