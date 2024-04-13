@@ -1,76 +1,108 @@
-version: '3.4'
-
-
-networks:
-  kafka-net:
-    driver: bridge
-
+version: "3.7"
 services:
+
   zookeeper:
     image: confluentinc/cp-zookeeper:latest
-    container_name: zookeeper
+    restart: always
 
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
 
-    ports:
-      - '2181:2181'
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
 
   kafka:
-    image: confluentinc/cp-kafka:latest
+    image: confluentinc/cp-enterprise-kafka:latest
+    restart: always
 
     depends_on:
       - zookeeper
 
     ports:
-      - '9092:9092'
-      - '9093:9093'
+      - 29092:29092
 
     environment:
       KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
-      ZOOKEEPER_SASL_ENABLED: 'false'
-      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://localhost:9092, SSL://localhost:9093'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'PLAINTEXT:PLAINTEXT,SSL:SSL'
-      KAFKA_SSL_KEYSTORE_FILENAME: 'kafka.keystore.jks'
-      KAFKA_SSL_KEYSTORE_CREDENTIALS: 'ssl.creds'
-      KAFKA_SSL_KEY_CREDENTIALS: 'ssl.creds'
-      KAFKA_SSL_TRUSTSTORE_FILENAME: 'kafka.truststore.jks'
-      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: 'ssl.creds'
-      KAFKA_SSL_CLIENT_AUTH: 'required'
-      KAFKA_SECURITY_PROTOCOL: 'SSL'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      CONFLUENT_METRICS_REPORTER_BOOTSTRAP_SERVERS: kafka:9093
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 
     volumes:
-      - ./certs:/etc/kafka/secrets
+      - kafka-data:/var/lib/kafka/data
 
+  debezium:
+    image: debezium/connect:2.6.1.Final
+    restart: always
+
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      DATABASE_HISTORY: io.debezium.relational.history.KafkaDatabaseHistory
+      DATABASE_HISTORY_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      DATABASE_HISTORY_TOPIC: debezium_history
+    depends_on: 
+      - kafka
+    ports:
+      - 8083:8083
+    volumes:
+      - debezium-data:/debezium/data
+    #   - ./path_to_jdbc_jar_directory:/kafka/connect/jdbc/sqljdbc_8.4/enu
+    # env_file:
+    #   - ./sql_server_config.env
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.1
+    restart: always
+
+    environment:
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://schema-registry:8081,http://localhost:8081
+      SCHEMA_REGISTRY_GROUP_ID: 1
+      SCHEMA_REGISTRY_AVRO_COMPATIBILITY_LEVEL: backward
+
+    ports:
+      - 8081:8081
+
+    depends_on: [zookeeper, kafka]
+
+    volumes:
+      - schema-registry-data:/var/lib/schema-registry/data
+
+  kafka_manager:
+    image: hlebalbau/kafka-manager:stable
+    restart: always
+
+    ports:
+      - "9000:9000"
+
+    depends_on:
+      - zookeeper
+      - kafka
+
+    environment:
+      ZK_HOSTS: "zookeeper:2181"
+      APPLICATION_SECRET: "random-secret"
+
+    command: -Dpidfile.path=/dev/null
     
-
-# #!/bin/bash
-
-# # Create directory for certificates
-# mkdir -p certs
-
-# # Generate Root CA
-# openssl genrsa -out root.key 2048
-# openssl req -x509 -new -key root.key -out root.crt -days 36500 -subj "/C=IN/ST=UttarPradesh/L=Mirzapur/O=private/CN=Root CA"
-
-# # Generate Server Key and Certificate
-# openssl genrsa -out kafka.key 2048
-# openssl req -new -key kafka.key -out kafka.csr -subj "/C=IN/ST=UttarPradesh/L=Mirzapur/O=private/CN=Root CA"
-# openssl x509 -req -in kafka.csr -days 36500 -sha256 -CA root.crt -CAkey root.key -CAcreateserial -out kafka.crt
-
-# # Generate Keystores (replace passwords with strong ones)
-# storepass=$(cat ssl.creds) 
-
-# keytool -import -noprompt -keystore kafka.keystore.jks -storepass $storepass -alias rootCA -file root.crt
-# keytool -import -noprompt -keystore kafka.keystore.jks -storepass $storepass -alias kafka -file kafka.crt
-# keytool -import -noprompt -keystore client.keystore.jks -storepass $storepass -alias kafka -file kafka.crt
-
-# # Create truststore (same password as keystore)
-# keytool -import -noprompt -keystore kafka.truststore.jks -storepass $storepass -alias rootCA -file root.crt
-
-
+volumes:
+  zookeeper-data:
+  zookeeper-logs:
+  kafka-data:
+  debezium-data:
+  schema-registry-data:
 
 #docker-compose -f zookeeper-kafka.yml up -d
 #docker ps  
@@ -84,28 +116,3 @@ services:
 
 #docker network ls
 #docker inspect docker-workspace-kafka-1 | grep IPAddress
-
-
-
-
-# version: '3.8'
-
-# services:
-#   debezium-connector-sqlserver1:  # Replace with your connector name
-#     image: debezium/debezium-connector-sqlserver:1.9  # Adjust image version as needed
-#     depends_on:
-#       - kafka  # Debezium connector depends on Kafka
-#     environment:
-#       # Replace with your SQL Server connection details for server 1
-#       DATABASE_HOSTNAME: <your_sqlserver1_hostname>
-#       DATABASE_PORT: 1433
-#       DATABASE_USER: <your_sqlserver1_username>
-#       DATABASE_PASSWORD: <your_sqlserver1_password>
-#       DATABASE_NAME: <your_sqlserver1_dbname>
-#       # Optional: Specify tables to capture changes from (comma-separated list)
-#       # WHITELIST_TABLE_INCLUDE: "public.customer,public.order"
-#       # Properties for Kafka connection and topic naming
-#       OFFSET_STORAGE_TOPIC: debezium-offset-stores
-#       BOOTSTRAP_SERVERS: localhost:9092  # Connect to local Kafka instance
-#       # Set topics based on your naming convention
-#       TOPIC_PREFIX: sqlserver1-  # Use a unique prefix for server 1
