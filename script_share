@@ -127,3 +127,250 @@ if __name__ == "__main__":
     df_report = generate_dependency_report_df(main_procedure)
     generate_dependency_report(main_procedure)
     print(df_report) 
+
+
+
+
+
+
+
+
+
+
+import pyodbc
+import sqlparse
+import pandas as pd
+
+# SQL Server connection details (replace with your credentials)
+server = 'your_server_name'
+database = 'your_database_name'
+username = 'your_username'
+password = 'your_password'
+conn_str = f'DRIVER={{SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}'
+
+def get_procedure_definition(procedure_name):
+    """Retrieves the definition of a stored procedure."""
+    try:
+        with pyodbc.connect(conn_str) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT definition FROM sys.sql_modules WHERE object_id = OBJECT_ID(?)", procedure_name)
+                result = cursor.fetchone()
+                return result[0] if result else None
+    except Exception as e:
+        print(f"Error fetching procedure definition: {e}")
+        return None
+
+def get_object_type(object_name):
+    """Determines the type of a SQL Server object."""
+    try:
+        with pyodbc.connect(conn_str) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT type_desc 
+                    FROM sys.objects 
+                    WHERE OBJECT_ID = OBJECT_ID(?)
+                    """,
+                    object_name,
+                )
+                result = cursor.fetchone()
+                return result[0] if result else "Unknown"
+    except Exception as e:
+        print(f"Error getting object type: {e}")
+        return "Unknown"
+
+def extract_dependencies(sql_code, object_name):
+    """Extracts dependencies using SQLParse."""
+    dependencies = []
+    parsed = sqlparse.parse(sql_code)
+
+    for statement in parsed:
+        if statement.get_type() in ('SELECT', 'INSERT', 'UPDATE', 'DELETE'):
+            for token in statement.tokens:
+                if token.ttype is None and token.is_group:
+                    for sub_token in token.tokens:
+                        if sub_token.ttype is None and sub_token.is_group:
+                            for sub_sub_token in sub_token.tokens:
+                                if sub_sub_token.ttype is None:
+                                    if sub_sub_token.get_real_name():
+                                        table_name = sub_sub_token.get_real_name()
+                                        object_type = get_object_type(table_name)
+                                        dependencies.append(
+                                            {
+                                                'object_name': object_name,
+                                                'table_name': table_name,
+                                                'operation_type': statement.get_type(),
+                                                'column_name': '',
+                                                'surrounding_text': str(statement).strip(),
+                                                'object_type': object_type
+                                            }
+                                        )
+    return dependencies
+
+def recursive_dependency_analysis(main_procedure_name, visited=None):
+    """Performs recursive dependency analysis."""
+    visited = visited or set()  # Keep track of visited procedures to avoid cycles
+    visited.add(main_procedure_name)
+
+    sql_code = get_procedure_definition(main_procedure_name)
+    if not sql_code:
+        print(f"Procedure not found or error: {main_procedure_name}")
+        return []
+
+    dependencies = extract_dependencies(sql_code, main_procedure_name)
+    all_dependencies = dependencies.copy() 
+
+    for dependency in dependencies:
+        if dependency['object_type'] == 'SQL_STORED_PROCEDURE' and dependency['table_name'] not in visited:
+            all_dependencies.extend(
+                recursive_dependency_analysis(dependency['table_name'], visited.copy()) 
+            )
+
+    return all_dependencies
+
+def generate_dependency_report_df(main_procedure_name):
+    """Generates a Pandas DataFrame report."""
+    all_dependencies = recursive_dependency_analysis(main_procedure_name)
+
+    df = pd.DataFrame(all_dependencies, columns=[
+        'object_name', 'table_name', 'operation_type', 'column_name', 'surrounding_text', 'object_type'
+    ])
+    return df
+
+def generate_dependency_report(main_procedure_name):
+    """Generates a dependency report for the given stored procedure."""
+    all_dependencies = recursive_dependency_analysis(main_procedure_name)
+
+    print(f"Dependency Report for: {main_procedure_name}\n")
+    for dependency in all_dependencies:
+        print(f"  - Dependency: {dependency['table_name']}")
+        print(f"    Type: {dependency['object_type']}")
+        print(f"    Operation: {dependency['operation_type']}")
+        if dependency['column_name']:
+            print(f"    Columns: {dependency['column_name']}")
+        print("-" * 40)
+
+if __name__ == "__main__":
+    main_procedure = 'your_main_stored_procedure' 
+    df_report = generate_dependency_report_df(main_procedure)
+    generate_dependency_report(main_procedure)
+    print(df_report) 
+
+
+
+
+
+
+
+import pyodbc
+import sqlglot
+import pandas as pd
+
+# SQL Server connection details (replace with your credentials)
+server = 'your_server_name'
+database = 'your_database_name'
+username = 'your_username'
+password = 'your_password'
+conn_str = f'DRIVER={{SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}'
+
+def get_procedure_definition(procedure_name):
+    """Retrieves the definition of a stored procedure."""
+    try:
+        with pyodbc.connect(conn_str) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT definition FROM sys.sql_modules WHERE object_id = OBJECT_ID(?)", procedure_name)
+                result = cursor.fetchone()
+                return result[0] if result else None
+    except Exception as e:
+        print(f"Error fetching procedure definition: {e}")
+        return None
+
+def get_object_type(object_name):
+    """Determines the type of a SQL Server object."""
+    try:
+        with pyodbc.connect(conn_str) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT type_desc 
+                    FROM sys.objects 
+                    WHERE OBJECT_ID = OBJECT_ID(?)
+                    """,
+                    object_name,
+                )
+                result = cursor.fetchone()
+                return result[0] if result else "Unknown"
+    except Exception as e:
+        print(f"Error getting object type: {e}")
+        return "Unknown"
+
+def extract_dependencies(sql_code, object_name):
+    """Extracts dependencies using sqlglot."""
+    dependencies = []
+    parsed = sqlglot.parse(sql_code)
+
+    for stmt in parsed:
+        if isinstance(stmt, sqlglot.expressions.Statement):
+            for table in stmt.find_all(sqlglot.expressions.Table):
+                table_name = table.name
+                object_type = get_object_type(table_name)
+                dependencies.append(
+                    {
+                        'object_name': object_name,
+                        'table_name': table_name,
+                        'operation_type': stmt.sql(),
+                        'column_name': '',
+                        'surrounding_text': sql_code.strip(),
+                        'object_type': object_type
+                    }
+                )
+    return dependencies
+
+def recursive_dependency_analysis(main_procedure_name, visited=None):
+    """Performs recursive dependency analysis."""
+    visited = visited or set()  # Keep track of visited procedures to avoid cycles
+    visited.add(main_procedure_name)
+
+    sql_code = get_procedure_definition(main_procedure_name)
+    if not sql_code:
+        print(f"Procedure not found or error: {main_procedure_name}")
+        return []
+
+    dependencies = extract_dependencies(sql_code, main_procedure_name)
+    all_dependencies = dependencies.copy() 
+
+    for dependency in dependencies:
+        if dependency['object_type'] == 'SQL_STORED_PROCEDURE' and dependency['table_name'] not in visited:
+            all_dependencies.extend(
+                recursive_dependency_analysis(dependency['table_name'], visited.copy()) 
+            )
+
+    return all_dependencies
+
+def generate_dependency_report_df(main_procedure_name):
+    """Generates a Pandas DataFrame report."""
+    all_dependencies = recursive_dependency_analysis(main_procedure_name)
+
+    df = pd.DataFrame(all_dependencies, columns=[
+        'object_name', 'table_name', 'operation_type', 'column_name', 'surrounding_text', 'object_type'
+    ])
+    return df
+
+def generate_dependency_report(main_procedure_name):
+    """Generates a dependency report for the given stored procedure."""
+    all_dependencies = recursive_dependency_analysis(main_procedure_name)
+
+    print(f"Dependency Report for: {main_procedure_name}\n")
+    for dependency in all_dependencies:
+        print(f"  - Dependency: {dependency['table_name']}")
+        print(f"    Type: {dependency['object_type']}")
+        print(f"    Operation: {dependency['operation_type']}")
+        if dependency['column_name']:
+            print(f"    Columns: {dependency['column_name']}")
+        print("-" * 40)
+
+if __name__ == "__main__":
+    main_procedure = 'your_main_stored_procedure' 
+    df_report = generate_dependency_report_df(main_procedure)
+    generate_dependency_report(main_procedure)
+    print(df_report) 
