@@ -498,3 +498,51 @@ if __name__ == "__main__":
     df_report = generate_dependency_report_df(main_procedure)
     generate_dependency_report(main_procedure)
     print(df_report)
+
+
+
+
+
+import re
+import pandas as pd
+
+def find_occurrences_with_context(text, search_term):
+    # Define the SQL keywords
+    sql_keywords = r"\b(create|set|from|join|left join|right join|inner join|update|insert|delete|truncate)\b"
+    
+    # Create a regex pattern to capture the context around the search term
+    pattern = rf"((?:\b\w+\b[\s,]*){{0,30}}(?:{sql_keywords}[\s,]*)?)((?:\b\w+\b[\s,]*){{0,30}}{search_term})"
+    
+    # Split the text into words
+    words = re.findall(r'\b\w+\b', text)
+    
+    # Initialize the results list
+    results = []
+    occurrence_count = 0
+    
+    # Iterate over the words to find matches
+    for i in range(len(words)):
+        # Check if the current word is the search term
+        if words[i].lower() == search_term.lower():
+            occurrence_count += 1
+            # Get the context before the search term
+            start = max(i - 30, 0)
+            context_before = ' '.join(words[start:i])
+            context_before_match = re.search(sql_keywords, context_before, re.IGNORECASE)
+            sql_keyword = context_before_match.group(0) if context_before_match else ""
+            results.append({
+                'search_term': search_term,
+                'occurrence': occurrence_count,
+                'context_before': context_before,
+                'sql_keyword': sql_keyword
+            })
+    
+    # Create a pandas DataFrame from the results
+    df = pd.DataFrame(results)
+    return df
+
+
+search_term = "suppliers"
+df = find_occurrences_with_context(sql, search_term)
+print(df)
+
