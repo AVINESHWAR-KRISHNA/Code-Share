@@ -546,3 +546,188 @@ search_term = "suppliers"
 df = find_occurrences_with_context(sql, search_term)
 print(df)
 
+
+
+
+import re
+from collections import defaultdict
+
+def find_table_operations(tsql_script, table_names):
+    # Dictionary to hold occurrences and operations
+    result = defaultdict(lambda: {'count': 0, 'operations': defaultdict(int)})
+
+    # Create a dynamic regex pattern for table names with optional schema and brackets
+    table_pattern = r"(\[?([a-zA-Z_][\w]*)\]?\.?)?\[?({})\]?"
+
+    # Regex pattern for SQL operations
+    operations = r'\b(INSERT INTO|DELETE FROM|TRUNCATE TABLE|UPDATE|JOIN|FROM|INTO)\b'
+
+    # Combine table name pattern and operations pattern
+    combined_pattern = lambda table_name: re.compile(operations + r'\s+' + table_pattern.format(table_name), re.IGNORECASE)
+
+    for table_name in table_names:
+        pattern = combined_pattern(re.escape(table_name))
+        matches = pattern.findall(tsql_script)
+        
+        for match in matches:
+            operation = match[0].upper()
+            result[table_name]['count'] += 1
+            result[table_name]['operations'][operation] += 1
+
+    return result
+
+# Example usage
+tsql_script = """
+CREATE PROCEDURE SampleProcedure
+AS
+BEGIN
+    INSERT INTO dbo.MyTable (Column1, Column2)
+    SELECT Column1, Column2
+    FROM AnotherTable
+    JOIN dbo.MyTable ON AnotherTable.ID = dbo.MyTable.ID
+    DELETE FROM [dbo].[MyTable]
+    UPDATE MyTable
+    SET Column1 = 'NewValue'
+    WHERE Column2 = 'SomeValue'
+    TRUNCATE TABLE [dbo].MyTable
+END
+"""
+
+table_names = ['MyTable', 'AnotherTable']
+
+results = find_table_operations(tsql_script, table_names)
+for table, data in results.items():
+    print(f"Table: {table}")
+    print(f"  Occurrences: {data['count']}")
+    for operation, count in data['operations'].items():
+        print(f"  {operation}: {count}")
+
+
+
+
+
+
+
+
+
+
+
+import re
+from collections import defaultdict
+
+def find_table_operations(tsql_script, table_names):
+    # Dictionary to hold occurrences and operations
+    result = defaultdict(lambda: {'count': 0, 'operations': defaultdict(int)})
+
+    # Create a dynamic regex pattern for table names with optional schema and brackets
+    table_pattern = r"(\[?([a-zA-Z_][\w]*)\]?\.?)?\[?({})\]?"
+
+    # Regex pattern for SQL operations with optional whitespace and new lines
+    operations = r'\b(INSERT INTO|DELETE FROM|TRUNCATE TABLE|UPDATE|JOIN|FROM|INTO)\b'
+
+    # Combine table name pattern and operations pattern
+    combined_pattern = lambda table_name: re.compile(operations + r'\s+' + table_pattern.format(table_name), re.IGNORECASE)
+
+    for table_name in table_names:
+        pattern = combined_pattern(re.escape(table_name))
+        matches = pattern.findall(tsql_script)
+        
+        for match in matches:
+            operation = match[0].upper()
+            result[table_name]['count'] += 1
+            result[table_name]['operations'][operation] += 1
+
+    return result
+
+# Example usage
+tsql_script = """
+CREATE PROCEDURE SampleProcedure
+AS
+BEGIN
+    INSERT INTO dbo.MyTable (Column1, Column2)
+    SELECT Column1, Column2
+    FROM AnotherTable
+    JOIN dbo.MyTable ON AnotherTable.ID = dbo.MyTable.ID
+    DELETE FROM [dbo].[MyTable]
+    UPDATE MyTable
+    SET Column1 = 'NewValue'
+    WHERE Column2 = 'SomeValue'
+    TRUNCATE TABLE [dbo].MyTable
+END
+"""
+
+table_names = ['MyTable', 'AnotherTable']
+
+results = find_table_operations(tsql_script, table_names)
+for table, data in results.items():
+    print(f"Table: {table}")
+    print(f"  Occurrences: {data['count']}")
+    for operation, count in data['operations'].items():
+        print(f"  {operation}: {count}")
+
+
+
+
+
+
+
+
+
+
+
+
+import re
+from collections import defaultdict
+
+def find_table_operations(tsql_script, table_names):
+    # Dictionary to hold occurrences and operations
+    result = defaultdict(lambda: {'count': 0, 'operations': defaultdict(int)})
+
+    # Create a dynamic regex pattern for table names with optional schema and brackets
+    table_pattern = r"(\[?([a-zA-Z_][\w]*)\]?\.?)?\[?({})\]?"
+
+    # Regex pattern for SQL operations with optional whitespace and new lines
+    operations = r'\b(INSERT INTO|DELETE FROM|TRUNCATE TABLE|UPDATE|JOIN|FROM|INTO|SELECT)\b'
+
+    # Combine table name pattern and operations pattern
+    combined_pattern = lambda table_name: re.compile(operations + r'\s+' + table_pattern.format(table_name), re.IGNORECASE)
+
+    for table_name in table_names:
+        pattern = combined_pattern(re.escape(table_name))
+        matches = pattern.findall(tsql_script)
+        
+        for match in matches:
+            operation = match[0].upper()
+            result[table_name]['count'] += 1
+            result[table_name]['operations'][operation] += 1
+
+    return result
+
+# Example usage
+tsql_script = """
+CREATE PROCEDURE SampleProcedure
+AS
+BEGIN
+    INSERT INTO dbo.MyTable (Column1, Column2)
+    SELECT Column1, Column2
+    FROM AnotherTable
+    JOIN dbo.MyTable ON AnotherTable.ID = dbo.MyTable.ID
+    DELETE FROM [dbo].[MyTable]
+    UPDATE MyTable
+    SET Column1 = 'NewValue'
+    WHERE Column2 = 'SomeValue'
+    TRUNCATE TABLE [dbo].MyTable
+    SELECT * FROM dbo.AnotherTable
+END
+"""
+
+table_names = ['MyTable', 'AnotherTable']
+
+results = find_table_operations(tsql_script, table_names)
+for table, data in results.items():
+    print(f"Table: {table}")
+    print(f"  Occurrences: {data['count']}")
+    for operation, count in data['operations'].items():
+        print(f"  {operation}: {count}")
+
+
