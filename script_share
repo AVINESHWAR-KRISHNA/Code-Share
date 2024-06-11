@@ -930,3 +930,98 @@ table_name = 'MyTable'
 
 results = find_table_operations(tsql_script, table_name)
 print(results)
+
+
+
+
+
+
+
+import sqlparse
+from sql_metadata import Parser
+
+def extract_sql_statements(procedure):
+    parsed = sqlparse.parse(procedure)
+    statements = [str(stmt) for stmt in parsed if stmt.get_type() != 'DDL']
+    return statements
+
+def analyze_statements(statements):
+    for stmt in statements:
+        parser = Parser(stmt)
+        print("Tables: ", parser.tables)
+        print("Columns: ", parser.columns)
+        print("CRUD Operations: ", parser.operations)
+
+# Example T-SQL stored procedure
+stored_procedure = """
+CREATE PROCEDURE SampleProcedure
+AS
+BEGIN
+    SELECT * FROM Employees;
+    UPDATE Employees SET Salary = Salary * 1.1 WHERE Department = 'Sales';
+END
+"""
+
+# Extract SQL statements
+sql_statements = extract_sql_statements(stored_procedure)
+
+# Analyze each statement
+analyze_statements(sql_statements)
+
+
+
+
+
+
+
+
+import sqlparse
+from sql_metadata import Parser
+
+def extract_sql_statements(procedure):
+    """
+    Extract individual SQL statements from a stored procedure using sqlparse.
+    """
+    parsed = sqlparse.parse(procedure)
+    statements = [str(stmt).strip() for stmt in parsed if stmt.get_type() != 'DDL']
+    return statements
+
+def analyze_statements(statements):
+    """
+    Analyze SQL statements for metadata using sql-metadata.
+    """
+    metadata = []
+    for stmt in statements:
+        parser = Parser(stmt)
+        metadata.append({
+            "statement": stmt,
+            "tables": parser.tables,
+            "columns": parser.columns,
+            "crud_operations": parser.operations
+        })
+    return metadata
+
+# Example T-SQL stored procedure
+stored_procedure = """
+CREATE PROCEDURE SampleProcedure
+AS
+BEGIN
+    SELECT * FROM Employees;
+    UPDATE Employees SET Salary = Salary * 1.1 WHERE Department = 'Sales';
+    DELETE FROM Departments WHERE DepartmentID = 5;
+END
+"""
+
+# Extract SQL statements
+sql_statements = extract_sql_statements(stored_procedure)
+
+# Analyze each statement
+metadata = analyze_statements(sql_statements)
+
+# Print the metadata
+for data in metadata:
+    print("Statement:", data["statement"])
+    print("Tables:", data["tables"])
+    print("Columns:", data["columns"])
+    print("CRUD Operations:", data["crud_operations"])
+    print()
