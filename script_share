@@ -859,3 +859,74 @@ table_name = 'MyTable'
 
 results = find_table_operations(tsql_script, table_name)
 print(results)
+
+
+
+
+
+
+
+
+
+
+
+
+import re
+import pandas as pd
+
+def find_table_operations(tsql_script, table_name):
+    # List to hold data for the DataFrame
+    data = []
+
+    # Create a dynamic regex pattern for table names with optional schema and brackets
+    table_pattern = r"(\[?([a-zA-Z_][\w]*)\]?\.?)?\[?({})\]?"
+
+    # Regex pattern for SQL operations
+    operations = r'\b(INSERT INTO|DELETE FROM|TRUNCATE TABLE|UPDATE|JOIN|FROM|INTO|SELECT)\b'
+
+    # Combine table name pattern and operations pattern
+    pattern = re.compile(operations + r'\s+' + table_pattern.format(re.escape(table_name)), re.IGNORECASE)
+    
+    for match in pattern.finditer(tsql_script):
+        operation = match.group(1).upper()
+        start = match.start()
+        end = match.end()
+        surrounding_text = get_surrounding_text(tsql_script, start, end, 50)
+        data.append({
+            'search_term': table_name,
+            'occurrence': len(data) + 1,  # Incremental occurrence number
+            'sql_keyword': operation,
+            'surrounding_text': surrounding_text
+        })
+
+    return pd.DataFrame(data)
+
+def get_surrounding_text(text, start, end, word_count):
+    # Find the positions of the words around the start and end indices
+    start_idx = max(0, start - word_count)
+    end_idx = min(len(text), end + word_count)
+    surrounding_text = text[start_idx:end_idx]
+    return surrounding_text
+
+# Example usage
+tsql_script = """
+CREATE PROCEDURE SampleProcedure
+AS
+BEGIN
+    INSERT INTO dbo.MyTable (Column1, Column2)
+    SELECT Column1, Column2
+    FROM AnotherTable
+    JOIN dbo.MyTable ON AnotherTable.ID = dbo.MyTable.ID
+    DELETE FROM [dbo].[MyTable]
+    UPDATE MyTable
+    SET Column1 = 'NewValue'
+    WHERE Column2 = 'SomeValue'
+    TRUNCATE TABLE [dbo].MyTable
+    SELECT * FROM dbo.AnotherTable
+END
+"""
+
+table_name = 'MyTable'
+
+results = find_table_operations(tsql_script, table_name)
+print(results)
