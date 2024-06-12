@@ -62,34 +62,6 @@ ddf2 = dd.from_pandas(df2, npartitions=10)
 
 
 
-def compare_dataframes(ddf1, ddf2, join_columns):
-    # Perform a join on the specified columns
-    merged = ddf1.merge(ddf2, on=join_columns, suffixes=('_df1', '_df2'), how='outer', indicator=True)
-    
-    # Compute the merged dataframe
-    merged = merged.compute()
-    
-    # Identify differences
-    only_in_df1 = merged[merged['_merge'] == 'left_only']
-    only_in_df2 = merged[merged['_merge'] == 'right_only']
-    both = merged[merged['_merge'] == 'both']
-    
-    differences = {}
-    differences['only_in_df1'] = only_in_df1
-    differences['only_in_df2'] = only_in_df2
-    
-    # Compare column values for rows that exist in both dataframes
-    # mismatched_rows = both[both.filter(like='_df1').ne(both.filter(like='_df2')).any(axis=1)]
-    mismatched_rows = both[both.filter(like='_df1').astype(str).ne(both.filter(like='_df2').astype(str)).any(axis=1)]
-    
-    differences['mismatched_rows'] = mismatched_rows
-    
-    return differences
-
-# Perform comparison
-differences = compare_dataframes(ddf1, ddf2, ['id'])
-
-
 def generate_report(df1, df2, differences, join_column, sample_rows=None, mismatch_sample=None):
     report = []
 
@@ -192,18 +164,26 @@ def generate_report(df1, df2, differences, join_column, sample_rows=None, mismat
 
     # Sample mismatched rows
     sample_table_df1 = PrettyTable()
-    sample_table_df1.field_names = [join_column] + [f"DataFrame 1 ({col})" for col in df1.columns]
     sample_table_df2 = PrettyTable()
-    sample_table_df2.field_names = [join_column] + [f"DataFrame 2 ({col})" for col in df2.columns]
-    
+
+    # Include only common columns in sample_table_df2
+    common_cols = [col for col in df1.columns if col in df2.columns and col != join_column]
+    sample_table_df1.field_names = [join_column] + [f"DataFrame 1 ({col})" for col in common_cols]
+    sample_table_df2.field_names = [join_column] + [f"DataFrame 2 ({col})" for col in common_cols]
+
     if sample_rows:
         sample_mismatched = mismatched.head(sample_rows)
     else:
         sample_mismatched = mismatched
 
-    for row in sample_mismatched.itertuples(index=False):
-        sample_table_df1.add_row([row[df1.columns.get_loc(join_column)]] + list(row[:len(df1.columns)]))
-        sample_table_df2.add_row([row[df2.columns.get_loc(join_column)]] + list(row[len(df1.columns):len(df1.columns) + len(df2.columns)]))
+    for row in sample_mismatched.itertuples(index=False, name=None):
+        # Create a dictionary of the row values for easier access
+        row_dict = {col: row[i] for i, col in enumerate(mismatched.columns)}
+        row_df1 = [row_dict[join_column]] + [row_dict[f"{col}_df1"] for col in common_cols]
+        row_df2 = [row_dict[join_column]] + [row_dict[f"{col}_df2"] for col in common_cols]
+        
+        sample_table_df1.add_row(row_df1)
+        sample_table_df2.add_row(row_df2)
     
     add_section("Sample Mismatched Rows from DataFrame 1", sample_table_df1)
     add_section("Sample Mismatched Rows from DataFrame 2", sample_table_df2)
@@ -215,6 +195,7 @@ differences = compare_dataframes(ddf1, ddf2, ['id'])
 
 # Generate report with sample rows and mismatched row limits
 report = generate_report(df1, df2, differences, join_column='id', sample_rows=10, mismatch_sample=5)
+
 
 print(report)
 
