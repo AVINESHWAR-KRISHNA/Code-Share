@@ -60,6 +60,32 @@ ddf2 = dd.from_pandas(df2, npartitions=10)
 # print("\nDataFrame 2:")
 # print(df2.head())
 
+def compare_dataframes(ddf1, ddf2, join_columns):
+    # Perform a join on the specified columns
+    merged = ddf1.merge(ddf2, on=join_columns, suffixes=('_df1', '_df2'), how='outer', indicator=True)
+
+    # Compute the merged dataframe
+    merged = merged.compute()
+
+    # Identify differences
+    only_in_df1 = merged[merged['_merge'] == 'left_only']
+    only_in_df2 = merged[merged['_merge'] == 'right_only']
+    both = merged[merged['_merge'] == 'both']
+
+    differences = {}
+    differences['only_in_df1'] = only_in_df1
+    differences['only_in_df2'] = only_in_df2
+
+    # Compare column values for rows that exist in both dataframes
+    # mismatched_rows = both[both.filter(like='_df1').ne(both.filter(like='_df2')).any(axis=1)]
+    mismatched_rows = both[both.filter(like='_df1').astype(str).ne(both.filter(like='_df2').astype(str)).any(axis=1)]
+
+    differences['mismatched_rows'] = mismatched_rows
+
+    return differences
+
+# Perform comparison
+differences = compare_dataframes(ddf1, ddf2, ['id'])
 
 
 def generate_report(df1, df2, differences, join_column, sample_rows=None, mismatch_sample=None):
