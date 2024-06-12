@@ -1,806 +1,3 @@
-import pyodbc
-import re
-import pandas as pd
-
-# SQL Server connection details (replace with your credentials)
-server = 'your_server_name'
-database = 'your_database_name'
-username = 'your_username'
-password = 'your_password'
-conn_str = f'DRIVER={{SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}'
-
-def get_procedure_definition(procedure_name):
-    """Retrieves the definition of a stored procedure."""
-    try:
-        with pyodbc.connect(conn_str) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT definition FROM sys.sql_modules WHERE object_id = OBJECT_ID(?)", procedure_name)
-                result = cursor.fetchone()
-                return result[0] if result else None
-    except Exception as e:
-        print(f"Error fetching procedure definition: {e}")
-        return None
-
-def get_object_type(object_name):
-    """Determines the type of a SQL Server object."""
-    try:
-        with pyodbc.connect(conn_str) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT type_desc 
-                    FROM sys.objects 
-                    WHERE OBJECT_ID = OBJECT_ID(?)
-                    """,
-                    object_name,
-                )
-                result = cursor.fetchone()
-                return result[0] if result else "Unknown"
-    except Exception as e:
-        print(f"Error getting object type: {e}")
-        return "Unknown"
-
-def extract_dependencies(sql_code, object_name):
-    """Extracts dependencies with surrounding text, join types, and object type checks."""
-    dependencies = []
-    pattern = r'(.{0,50}\b(SELECT|INSERT|UPDATE|DELETE|FROM|JOIN|LEFT\s+JOIN|RIGHT\s+JOIN)\b.{0,50})'
-    matches = re.findall(pattern, sql_code, re.IGNORECASE | re.DOTALL)
-
-    for match in matches:
-        surrounding_text = match[0].strip()
-        operation = match[1].strip().upper()
-        object_match = re.search(
-            r'\b(FROM|JOIN|LEFT\s+JOIN|RIGHT\s+JOIN)\s+([\w\.]+)',
-            surrounding_text,
-            re.IGNORECASE,
-        )
-        if object_match:
-            table_name = object_match.group(2).strip()
-            column_match = re.search(
-                r'\bSELECT\s+(.+?)\s+(FROM|JOIN)', surrounding_text, re.IGNORECASE | re.DOTALL
-            )
-            columns = (
-                [col.strip() for col in column_match.group(1).split(',')]
-                if column_match
-                else []
-            )
-            object_type = get_object_type(table_name)
-
-            dependencies.append(
-                {
-                    'object_name': object_name,
-                    'table_name': table_name,
-                    'operation_type': operation,
-                    'column_name': ', '.join(columns),
-                    'surrounding_text': surrounding_text,
-                    'object_type': object_type
-                }
-            )
-
-    return dependencies
-
-def recursive_dependency_analysis(main_procedure_name, visited=None):
-    """Performs recursive dependency analysis."""
-    visited = visited or set()  # Keep track of visited procedures to avoid cycles
-    visited.add(main_procedure_name)
-
-    sql_code = get_procedure_definition(main_procedure_name)
-    if not sql_code:
-        print(f"Procedure not found or error: {main_procedure_name}")
-        return []
-
-    dependencies = extract_dependencies(sql_code, main_procedure_name)
-    all_dependencies = dependencies.copy() 
-
-    for dependency in dependencies:
-        if dependency['object_type'] == 'SQL_STORED_PROCEDURE' and dependency['table_name'] not in visited:
-            all_dependencies.extend(
-                recursive_dependency_analysis(dependency['table_name'], visited.copy()) 
-            )
-
-    return all_dependencies
-
-def generate_dependency_report_df(main_procedure_name):
-    """Generates a Pandas DataFrame report."""
-    all_dependencies = recursive_dependency_analysis(main_procedure_name)
-
-    df = pd.DataFrame(all_dependencies, columns=[
-        'object_name', 'table_name', 'operation_type', 'column_name', 'surrounding_text', 'object_type'
-    ])
-    return df
-
-def generate_dependency_report(main_procedure_name):
-    """Generates a dependency report for the given stored procedure."""
-    all_dependencies = recursive_dependency_analysis(main_procedure_name)
-
-    print(f"Dependency Report for: {main_procedure_name}\n")
-    for dependency in all_dependencies:
-        print(f"  - Dependency: {dependency['table_name']}")
-        print(f"    Type: {dependency['object_type']}")
-        print(f"    Operation: {dependency['operation_type']}")
-        if dependency['column_name']:
-            print(f"    Columns: {dependency['column_name']}")
-        print("-" * 40)
-
-if __name__ == "__main__":
-    main_procedure = 'your_main_stored_procedure' 
-    df_report = generate_dependency_report_df(main_procedure)
-    generate_dependency_report(main_procedure)
-    print(df_report) 
-
-
-
-
-
-
-
-
-
-
-import pyodbc
-import sqlparse
-import pandas as pd
-
-# SQL Server connection details (replace with your credentials)
-server = 'your_server_name'
-database = 'your_database_name'
-username = 'your_username'
-password = 'your_password'
-conn_str = f'DRIVER={{SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}'
-
-def get_procedure_definition(procedure_name):
-    """Retrieves the definition of a stored procedure."""
-    try:
-        with pyodbc.connect(conn_str) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT definition FROM sys.sql_modules WHERE object_id = OBJECT_ID(?)", procedure_name)
-                result = cursor.fetchone()
-                return result[0] if result else None
-    except Exception as e:
-        print(f"Error fetching procedure definition: {e}")
-        return None
-
-def get_object_type(object_name):
-    """Determines the type of a SQL Server object."""
-    try:
-        with pyodbc.connect(conn_str) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT type_desc 
-                    FROM sys.objects 
-                    WHERE OBJECT_ID = OBJECT_ID(?)
-                    """,
-                    object_name,
-                )
-                result = cursor.fetchone()
-                return result[0] if result else "Unknown"
-    except Exception as e:
-        print(f"Error getting object type: {e}")
-        return "Unknown"
-
-def extract_dependencies(sql_code, object_name):
-    """Extracts dependencies using SQLParse."""
-    dependencies = []
-    parsed = sqlparse.parse(sql_code)
-
-    for statement in parsed:
-        if statement.get_type() in ('SELECT', 'INSERT', 'UPDATE', 'DELETE'):
-            for token in statement.tokens:
-                if token.ttype is None and token.is_group:
-                    for sub_token in token.tokens:
-                        if sub_token.ttype is None and sub_token.is_group:
-                            for sub_sub_token in sub_token.tokens:
-                                if sub_sub_token.ttype is None:
-                                    if sub_sub_token.get_real_name():
-                                        table_name = sub_sub_token.get_real_name()
-                                        object_type = get_object_type(table_name)
-                                        dependencies.append(
-                                            {
-                                                'object_name': object_name,
-                                                'table_name': table_name,
-                                                'operation_type': statement.get_type(),
-                                                'column_name': '',
-                                                'surrounding_text': str(statement).strip(),
-                                                'object_type': object_type
-                                            }
-                                        )
-    return dependencies
-
-def recursive_dependency_analysis(main_procedure_name, visited=None):
-    """Performs recursive dependency analysis."""
-    visited = visited or set()  # Keep track of visited procedures to avoid cycles
-    visited.add(main_procedure_name)
-
-    sql_code = get_procedure_definition(main_procedure_name)
-    if not sql_code:
-        print(f"Procedure not found or error: {main_procedure_name}")
-        return []
-
-    dependencies = extract_dependencies(sql_code, main_procedure_name)
-    all_dependencies = dependencies.copy() 
-
-    for dependency in dependencies:
-        if dependency['object_type'] == 'SQL_STORED_PROCEDURE' and dependency['table_name'] not in visited:
-            all_dependencies.extend(
-                recursive_dependency_analysis(dependency['table_name'], visited.copy()) 
-            )
-
-    return all_dependencies
-
-def generate_dependency_report_df(main_procedure_name):
-    """Generates a Pandas DataFrame report."""
-    all_dependencies = recursive_dependency_analysis(main_procedure_name)
-
-    df = pd.DataFrame(all_dependencies, columns=[
-        'object_name', 'table_name', 'operation_type', 'column_name', 'surrounding_text', 'object_type'
-    ])
-    return df
-
-def generate_dependency_report(main_procedure_name):
-    """Generates a dependency report for the given stored procedure."""
-    all_dependencies = recursive_dependency_analysis(main_procedure_name)
-
-    print(f"Dependency Report for: {main_procedure_name}\n")
-    for dependency in all_dependencies:
-        print(f"  - Dependency: {dependency['table_name']}")
-        print(f"    Type: {dependency['object_type']}")
-        print(f"    Operation: {dependency['operation_type']}")
-        if dependency['column_name']:
-            print(f"    Columns: {dependency['column_name']}")
-        print("-" * 40)
-
-if __name__ == "__main__":
-    main_procedure = 'your_main_stored_procedure' 
-    df_report = generate_dependency_report_df(main_procedure)
-    generate_dependency_report(main_procedure)
-    print(df_report) 
-
-
-
-
-
-
-
-import pyodbc
-import sqlglot
-import pandas as pd
-
-# SQL Server connection details (replace with your credentials)
-server = 'your_server_name'
-database = 'your_database_name'
-username = 'your_username'
-password = 'your_password'
-conn_str = f'DRIVER={{SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}'
-
-def get_procedure_definition(procedure_name):
-    """Retrieves the definition of a stored procedure."""
-    try:
-        with pyodbc.connect(conn_str) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT definition FROM sys.sql_modules WHERE object_id = OBJECT_ID(?)", procedure_name)
-                result = cursor.fetchone()
-                return result[0] if result else None
-    except Exception as e:
-        print(f"Error fetching procedure definition: {e}")
-        return None
-
-def get_object_type(object_name):
-    """Determines the type of a SQL Server object."""
-    try:
-        with pyodbc.connect(conn_str) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT type_desc 
-                    FROM sys.objects 
-                    WHERE OBJECT_ID = OBJECT_ID(?)
-                    """,
-                    object_name,
-                )
-                result = cursor.fetchone()
-                return result[0] if result else "Unknown"
-    except Exception as e:
-        print(f"Error getting object type: {e}")
-        return "Unknown"
-
-def extract_dependencies(sql_code, object_name):
-    """Extracts dependencies using sqlglot."""
-    dependencies = []
-    parsed = sqlglot.parse(sql_code)
-
-    for stmt in parsed:
-        if isinstance(stmt, sqlglot.expressions.Statement):
-            for table in stmt.find_all(sqlglot.expressions.Table):
-                table_name = table.name
-                object_type = get_object_type(table_name)
-                dependencies.append(
-                    {
-                        'object_name': object_name,
-                        'table_name': table_name,
-                        'operation_type': stmt.sql(),
-                        'column_name': '',
-                        'surrounding_text': sql_code.strip(),
-                        'object_type': object_type
-                    }
-                )
-    return dependencies
-
-def recursive_dependency_analysis(main_procedure_name, visited=None):
-    """Performs recursive dependency analysis."""
-    visited = visited or set()  # Keep track of visited procedures to avoid cycles
-    visited.add(main_procedure_name)
-
-    sql_code = get_procedure_definition(main_procedure_name)
-    if not sql_code:
-        print(f"Procedure not found or error: {main_procedure_name}")
-        return []
-
-    dependencies = extract_dependencies(sql_code, main_procedure_name)
-    all_dependencies = dependencies.copy() 
-
-    for dependency in dependencies:
-        if dependency['object_type'] == 'SQL_STORED_PROCEDURE' and dependency['table_name'] not in visited:
-            all_dependencies.extend(
-                recursive_dependency_analysis(dependency['table_name'], visited.copy()) 
-            )
-
-    return all_dependencies
-
-def generate_dependency_report_df(main_procedure_name):
-    """Generates a Pandas DataFrame report."""
-    all_dependencies = recursive_dependency_analysis(main_procedure_name)
-
-    df = pd.DataFrame(all_dependencies, columns=[
-        'object_name', 'table_name', 'operation_type', 'column_name', 'surrounding_text', 'object_type'
-    ])
-    return df
-
-def generate_dependency_report(main_procedure_name):
-    """Generates a dependency report for the given stored procedure."""
-    all_dependencies = recursive_dependency_analysis(main_procedure_name)
-
-    print(f"Dependency Report for: {main_procedure_name}\n")
-    for dependency in all_dependencies:
-        print(f"  - Dependency: {dependency['table_name']}")
-        print(f"    Type: {dependency['object_type']}")
-        print(f"    Operation: {dependency['operation_type']}")
-        if dependency['column_name']:
-            print(f"    Columns: {dependency['column_name']}")
-        print("-" * 40)
-
-if __name__ == "__main__":
-    main_procedure = 'your_main_stored_procedure' 
-    df_report = generate_dependency_report_df(main_procedure)
-    generate_dependency_report(main_procedure)
-    print(df_report) 
-
-
-
-
-
-
-
-
-import pyodbc
-import sqlglot
-from sqlglot.optimizer.scope import find_all_in_scope
-import pandas as pd
-
-# SQL Server connection details (replace with your credentials)
-server = 'your_server_name'
-database = 'your_database_name'
-username = 'your_username'
-password = 'your_password'
-conn_str = f'DRIVER={{SQL Server}};SERVER={server};DATABASE={database};UID={username};PWD={password}'
-
-def get_procedure_definition(procedure_name):
-    """Retrieves the definition of a stored procedure."""
-    try:
-        with pyodbc.connect(conn_str) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT definition FROM sys.sql_modules WHERE object_id = OBJECT_ID(?)", procedure_name)
-                result = cursor.fetchone()
-                return result[0] if result else None
-    except Exception as e:
-        print(f"Error fetching procedure definition: {e}")
-        return None
-
-def get_object_type(object_name):
-    """Determines the type of a SQL Server object."""
-    try:
-        with pyodbc.connect(conn_str) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT type_desc 
-                    FROM sys.objects 
-                    WHERE OBJECT_ID = OBJECT_ID(?)
-                    """,
-                    object_name,
-                )
-                result = cursor.fetchone()
-                return result[0] if result else "Unknown"
-    except Exception as e:
-        print(f"Error getting object type: {e}")
-        return "Unknown"
-
-def extract_dependencies(sql_code, object_name):
-    """Extracts dependencies using sqlglot."""
-    dependencies = []
-    parsed = sqlglot.parse_one(sql_code)
-    
-    # Find all tables and their related columns in scope
-    for scope in find_all_in_scope(parsed):
-        for table in scope.tables.values():
-            table_name = table.this.sql()
-            object_type = get_object_type(table_name)
-            columns = [col.sql() for col in scope.columns if col.table == table.this]
-
-            dependencies.append(
-                {
-                    'object_name': object_name,
-                    'table_name': table_name,
-                    'operation_type': 'TABLE',
-                    'column_name': ', '.join(columns),
-                    'surrounding_text': sql_code.strip(),
-                    'object_type': object_type
-                }
-            )
-
-    return dependencies
-
-def recursive_dependency_analysis(main_procedure_name, visited=None):
-    """Performs recursive dependency analysis."""
-    visited = visited or set()  # Keep track of visited procedures to avoid cycles
-    visited.add(main_procedure_name)
-
-    sql_code = get_procedure_definition(main_procedure_name)
-    if not sql_code:
-        print(f"Procedure not found or error: {main_procedure_name}")
-        return []
-
-    dependencies = extract_dependencies(sql_code, main_procedure_name)
-    all_dependencies = dependencies.copy()
-
-    for dependency in dependencies:
-        if dependency['object_type'] == 'SQL_STORED_PROCEDURE' and dependency['table_name'] not in visited:
-            all_dependencies.extend(
-                recursive_dependency_analysis(dependency['table_name'], visited.copy())
-            )
-
-    return all_dependencies
-
-def generate_dependency_report_df(main_procedure_name):
-    """Generates a Pandas DataFrame report."""
-    all_dependencies = recursive_dependency_analysis(main_procedure_name)
-
-    df = pd.DataFrame(all_dependencies, columns=[
-        'object_name', 'table_name', 'operation_type', 'column_name', 'surrounding_text', 'object_type'
-    ])
-    return df
-
-def generate_dependency_report(main_procedure_name):
-    """Generates a dependency report for the given stored procedure."""
-    all_dependencies = recursive_dependency_analysis(main_procedure_name)
-
-    print(f"Dependency Report for: {main_procedure_name}\n")
-    for dependency in all_dependencies:
-        print(f"  - Dependency: {dependency['table_name']}")
-        print(f"    Type: {dependency['object_type']}")
-        print(f"    Operation: {dependency['operation_type']}")
-        if dependency['column_name']:
-            print(f"    Columns: {dependency['column_name']}")
-        print("-" * 40)
-
-if __name__ == "__main__":
-    main_procedure = 'your_main_stored_procedure'
-    df_report = generate_dependency_report_df(main_procedure)
-    generate_dependency_report(main_procedure)
-    print(df_report)
-
-
-
-
-
-import re
-import pandas as pd
-
-def find_occurrences_with_context(text, search_term):
-    # Define the SQL keywords
-    sql_keywords = r"\b(create|set|from|join|left join|right join|inner join|update|insert|delete|truncate)\b"
-    
-    # Create a regex pattern to capture the context around the search term
-    pattern = rf"((?:\b\w+\b[\s,]*){{0,30}}(?:{sql_keywords}[\s,]*)?)((?:\b\w+\b[\s,]*){{0,30}}{search_term})"
-    
-    # Split the text into words
-    words = re.findall(r'\b\w+\b', text)
-    
-    # Initialize the results list
-    results = []
-    occurrence_count = 0
-    
-    # Iterate over the words to find matches
-    for i in range(len(words)):
-        # Check if the current word is the search term
-        if words[i].lower() == search_term.lower():
-            occurrence_count += 1
-            # Get the context before the search term
-            start = max(i - 30, 0)
-            context_before = ' '.join(words[start:i])
-            context_before_match = re.search(sql_keywords, context_before, re.IGNORECASE)
-            sql_keyword = context_before_match.group(0) if context_before_match else ""
-            results.append({
-                'search_term': search_term,
-                'occurrence': occurrence_count,
-                'context_before': context_before,
-                'sql_keyword': sql_keyword
-            })
-    
-    # Create a pandas DataFrame from the results
-    df = pd.DataFrame(results)
-    return df
-
-
-search_term = "suppliers"
-df = find_occurrences_with_context(sql, search_term)
-print(df)
-
-
-
-
-import re
-from collections import defaultdict
-
-def find_table_operations(tsql_script, table_names):
-    # Dictionary to hold occurrences and operations
-    result = defaultdict(lambda: {'count': 0, 'operations': defaultdict(int)})
-
-    # Create a dynamic regex pattern for table names with optional schema and brackets
-    table_pattern = r"(\[?([a-zA-Z_][\w]*)\]?\.?)?\[?({})\]?"
-
-    # Regex pattern for SQL operations
-    operations = r'\b(INSERT INTO|DELETE FROM|TRUNCATE TABLE|UPDATE|JOIN|FROM|INTO)\b'
-
-    # Combine table name pattern and operations pattern
-    combined_pattern = lambda table_name: re.compile(operations + r'\s+' + table_pattern.format(table_name), re.IGNORECASE)
-
-    for table_name in table_names:
-        pattern = combined_pattern(re.escape(table_name))
-        matches = pattern.findall(tsql_script)
-        
-        for match in matches:
-            operation = match[0].upper()
-            result[table_name]['count'] += 1
-            result[table_name]['operations'][operation] += 1
-
-    return result
-
-# Example usage
-tsql_script = """
-CREATE PROCEDURE SampleProcedure
-AS
-BEGIN
-    INSERT INTO dbo.MyTable (Column1, Column2)
-    SELECT Column1, Column2
-    FROM AnotherTable
-    JOIN dbo.MyTable ON AnotherTable.ID = dbo.MyTable.ID
-    DELETE FROM [dbo].[MyTable]
-    UPDATE MyTable
-    SET Column1 = 'NewValue'
-    WHERE Column2 = 'SomeValue'
-    TRUNCATE TABLE [dbo].MyTable
-END
-"""
-
-table_names = ['MyTable', 'AnotherTable']
-
-results = find_table_operations(tsql_script, table_names)
-for table, data in results.items():
-    print(f"Table: {table}")
-    print(f"  Occurrences: {data['count']}")
-    for operation, count in data['operations'].items():
-        print(f"  {operation}: {count}")
-
-
-
-
-
-
-
-
-
-
-
-import re
-from collections import defaultdict
-
-def find_table_operations(tsql_script, table_names):
-    # Dictionary to hold occurrences and operations
-    result = defaultdict(lambda: {'count': 0, 'operations': defaultdict(int)})
-
-    # Create a dynamic regex pattern for table names with optional schema and brackets
-    table_pattern = r"(\[?([a-zA-Z_][\w]*)\]?\.?)?\[?({})\]?"
-
-    # Regex pattern for SQL operations with optional whitespace and new lines
-    operations = r'\b(INSERT INTO|DELETE FROM|TRUNCATE TABLE|UPDATE|JOIN|FROM|INTO)\b'
-
-    # Combine table name pattern and operations pattern
-    combined_pattern = lambda table_name: re.compile(operations + r'\s+' + table_pattern.format(table_name), re.IGNORECASE)
-
-    for table_name in table_names:
-        pattern = combined_pattern(re.escape(table_name))
-        matches = pattern.findall(tsql_script)
-        
-        for match in matches:
-            operation = match[0].upper()
-            result[table_name]['count'] += 1
-            result[table_name]['operations'][operation] += 1
-
-    return result
-
-# Example usage
-tsql_script = """
-CREATE PROCEDURE SampleProcedure
-AS
-BEGIN
-    INSERT INTO dbo.MyTable (Column1, Column2)
-    SELECT Column1, Column2
-    FROM AnotherTable
-    JOIN dbo.MyTable ON AnotherTable.ID = dbo.MyTable.ID
-    DELETE FROM [dbo].[MyTable]
-    UPDATE MyTable
-    SET Column1 = 'NewValue'
-    WHERE Column2 = 'SomeValue'
-    TRUNCATE TABLE [dbo].MyTable
-END
-"""
-
-table_names = ['MyTable', 'AnotherTable']
-
-results = find_table_operations(tsql_script, table_names)
-for table, data in results.items():
-    print(f"Table: {table}")
-    print(f"  Occurrences: {data['count']}")
-    for operation, count in data['operations'].items():
-        print(f"  {operation}: {count}")
-
-
-
-
-
-
-
-
-
-
-
-
-import re
-from collections import defaultdict
-
-def find_table_operations(tsql_script, table_names):
-    # Dictionary to hold occurrences and operations
-    result = defaultdict(lambda: {'count': 0, 'operations': defaultdict(int)})
-
-    # Create a dynamic regex pattern for table names with optional schema and brackets
-    table_pattern = r"(\[?([a-zA-Z_][\w]*)\]?\.?)?\[?({})\]?"
-
-    # Regex pattern for SQL operations with optional whitespace and new lines
-    operations = r'\b(INSERT INTO|DELETE FROM|TRUNCATE TABLE|UPDATE|JOIN|FROM|INTO|SELECT)\b'
-
-    # Combine table name pattern and operations pattern
-    combined_pattern = lambda table_name: re.compile(operations + r'\s+' + table_pattern.format(table_name), re.IGNORECASE)
-
-    for table_name in table_names:
-        pattern = combined_pattern(re.escape(table_name))
-        matches = pattern.findall(tsql_script)
-        
-        for match in matches:
-            operation = match[0].upper()
-            result[table_name]['count'] += 1
-            result[table_name]['operations'][operation] += 1
-
-    return result
-
-# Example usage
-tsql_script = """
-CREATE PROCEDURE SampleProcedure
-AS
-BEGIN
-    INSERT INTO dbo.MyTable (Column1, Column2)
-    SELECT Column1, Column2
-    FROM AnotherTable
-    JOIN dbo.MyTable ON AnotherTable.ID = dbo.MyTable.ID
-    DELETE FROM [dbo].[MyTable]
-    UPDATE MyTable
-    SET Column1 = 'NewValue'
-    WHERE Column2 = 'SomeValue'
-    TRUNCATE TABLE [dbo].MyTable
-    SELECT * FROM dbo.AnotherTable
-END
-"""
-
-table_names = ['MyTable', 'AnotherTable']
-
-results = find_table_operations(tsql_script, table_names)
-for table, data in results.items():
-    print(f"Table: {table}")
-    print(f"  Occurrences: {data['count']}")
-    for operation, count in data['operations'].items():
-        print(f"  {operation}: {count}")
-
-
-
-
-
-
-import re
-from collections import defaultdict
-import pandas as pd
-
-def find_table_operations(tsql_script, table_names):
-    # List to hold data for the DataFrame
-    data = []
-
-    # Create a dynamic regex pattern for table names with optional schema and brackets
-    table_pattern = r"(\[?([a-zA-Z_][\w]*)\]?\.?)?\[?({})\]?"
-
-    # Regex pattern for SQL operations
-    operations = r'\b(INSERT INTO|DELETE FROM|TRUNCATE TABLE|UPDATE|JOIN|FROM|INTO|SELECT)\b'
-
-    # Combine table name pattern and operations pattern
-    combined_pattern = lambda table_name: re.compile(operations + r'\s+' + table_pattern.format(table_name), re.IGNORECASE)
-
-    for table_name in table_names:
-        pattern = combined_pattern(re.escape(table_name))
-        for match in pattern.finditer(tsql_script):
-            operation = match.group(1).upper()
-            surrounding_text = get_surrounding_text(tsql_script, match.start(), match.end(), 50)
-            data.append({
-                'search_term': table_name,
-                'occurrence': len(data) + 1,  # Incremental occurrence number
-                'sql_keyword': operation,
-                'surrounding_text': surrounding_text
-            })
-
-    return pd.DataFrame(data)
-
-def get_surrounding_text(text, start, end, word_count):
-    words = re.findall(r'\S+', text)
-    start_idx = max(0, start - word_count)
-    end_idx = min(len(words), end + word_count)
-    surrounding_words = words[start_idx:end_idx]
-    return ' '.join(surrounding_words)
-
-# Example usage
-tsql_script = """
-CREATE PROCEDURE SampleProcedure
-AS
-BEGIN
-    INSERT INTO dbo.MyTable (Column1, Column2)
-    SELECT Column1, Column2
-    FROM AnotherTable
-    JOIN dbo.MyTable ON AnotherTable.ID = dbo.MyTable.ID
-    DELETE FROM [dbo].[MyTable]
-    UPDATE MyTable
-    SET Column1 = 'NewValue'
-    WHERE Column2 = 'SomeValue'
-    TRUNCATE TABLE [dbo].MyTable
-    SELECT * FROM dbo.AnotherTable
-END
-"""
-
-table_names = ['MyTable', 'AnotherTable']
-
-results = find_table_operations(tsql_script, table_names)
-print(results)
-
-
-
-
-
-
 import re
 import pandas as pd
 
@@ -862,12 +59,7 @@ print(results)
 
 
 
-
-
-
-
-
-
+**************************************************************************************************************************************************************
 
 
 
@@ -933,7 +125,7 @@ print(results)
 
 
 
-
+**************************************************************************************************************************************************************
 
 
 
@@ -1009,7 +201,7 @@ print(results)
 
 
 
-
+**************************************************************************************************************************************************************
 
 
 
@@ -1085,3 +277,209 @@ table_name = 'MyTable'
 
 results = find_table_operations(tsql_script, table_name)
 print(results)
+
+
+
+**************************************************************************************************************************************************************
+
+
+
+import re
+import pandas as pd
+
+def find_table_operations(tsql_script, table_name):
+    # Remove line comments and multi-line comments
+    tsql_script = re.sub(r'--.*', '', tsql_script)  # Remove line comments
+    tsql_script = re.sub(r'/\*.*?\*/', '', tsql_script, flags=re.DOTALL)  # Remove multi-line comments
+
+    # List to hold data for the DataFrame
+    data = []
+
+    # Create a dynamic regex pattern for table names with optional schema and brackets
+    table_pattern = r"(\[?[a-zA-Z_][\w]*\]?\.?)?\[?{}\]?".format(re.escape(table_name))
+
+    # Regex pattern for SQL operations
+    operations = r'\b(INSERT INTO|DELETE FROM|TRUNCATE TABLE|UPDATE|JOIN|FROM|INTO|SELECT)\b'
+
+    # Combine table name pattern and operations pattern
+    combined_pattern = operations + r'\s+' + table_pattern + r'(\s+AS\s+\w+|\s+\w+)?\b'
+    pattern = re.compile(combined_pattern, re.IGNORECASE)
+
+    # Find all table name aliases from "FROM" and "JOIN" clauses
+    alias_pattern = re.compile(r'\bFROM\s+(\[?[a-zA-Z_][\w]*\]?\.?\[?{}\]?)(\s+AS\s+\w+|\s+\w+)?\b|JOIN\s+(\[?[a-zA-Z_][\w]*\]?\.?\[?{}\]?)(\s+AS\s+\w+|\s+\w+)?\b'.format(re.escape(table_name), re.escape(table_name)), re.IGNORECASE)
+    aliases = {table_name.lower()}
+    
+    for alias_match in alias_pattern.finditer(tsql_script):
+        if alias_match.group(2):  # Alias found after "AS" or space
+            alias = alias_match.group(2).strip().split()[-1].lower()
+            aliases.add(alias)
+
+    # Check each match and handle alias cases
+    for match in pattern.finditer(tsql_script):
+        operation = match.group(1).upper()
+        table_part = match.group(2)
+        alias_part = match.group(3)
+        table_full_name = (table_part + table_name).lower()
+
+        # If the table part or alias part matches the table name or its alias, it's a valid match
+        if table_full_name in aliases or (alias_part and alias_part.strip().lower() in aliases):
+            start = match.start()
+            end = match.end()
+            surrounding_text = get_surrounding_text(tsql_script, start, end, 50)
+            data.append({
+                'search_term': table_name,
+                'occurrence': len(data) + 1,  # Incremental occurrence number
+                'sql_keyword': operation,
+                'surrounding_text': surrounding_text
+            })
+
+    return pd.DataFrame(data)
+
+def get_surrounding_text(text, start, end, word_count):
+    words = text.split()
+    word_positions = []
+    pos = 0
+    for i, word in enumerate(words):
+        start_idx = text.find(word, pos)
+        end_idx = start_idx + len(word)
+        word_positions.append((start_idx, end_idx))
+        pos = end_idx
+
+    start_word = max(0, next(i for i, pos in enumerate(word_positions) if pos[0] >= start) - word_count)
+    end_word = min(len(words), next(i for i, pos in enumerate(word_positions) if pos[1] >= end) + word_count)
+
+    surrounding_text = ' '.join(words[start_word:end_word])
+    return surrounding_text
+
+# Example usage
+tsql_script = """
+CREATE PROCEDURE SampleProcedure
+AS
+BEGIN
+    -- This is a comment line
+    INSERT INTO dbo.MyTable (Column1, Column2)
+    SELECT Column1, Column2
+    FROM AnotherTable
+    JOIN dbo.MyTable t ON AnotherTable.ID = t.ID
+    DELETE FROM [dbo].[MyTable]
+    UPDATE MyTable
+    SET Column1 = 'NewValue'
+    WHERE Column2 = 'SomeValue'
+    TRUNCATE TABLE [dbo].MyTable
+    SELECT * FROM dbo.AnotherTable
+    UPDATE t SET t.ID = '1' FROM MyTable t
+END
+"""
+
+table_name = 'MyTable'
+
+results = find_table_operations(tsql_script, table_name)
+print(results)
+
+
+
+**************************************************************************************************************************************************************
+
+
+
+import re
+import pandas as pd
+
+def find_table_operations(tsql_script, table_name):
+    # Remove line comments and multi-line comments
+    tsql_script = re.sub(r'--.*', '', tsql_script)  # Remove line comments
+    tsql_script = re.sub(r'/\*.*?\*/', '', tsql_script, flags=re.DOTALL)  # Remove multi-line comments
+
+    # List to hold data for the DataFrame
+    data = []
+
+    # Create a dynamic regex pattern for table names with optional schema and brackets
+    table_pattern = r"(\[?[a-zA-Z_][\w]*\]?\.?)?\[?{}\]?".format(re.escape(table_name))
+
+    # Regex pattern for SQL operations
+    operations = r'\b(INSERT INTO|DELETE FROM|TRUNCATE TABLE|UPDATE|JOIN|FROM|INTO|SELECT)\b'
+
+    # Combine table name pattern and operations pattern
+    combined_pattern = operations + r'\s+' + table_pattern + r'(\s+AS\s+\w+|\s+\w+)?\b'
+    pattern = re.compile(combined_pattern, re.IGNORECASE)
+
+    # Find all table name aliases from "FROM" and "JOIN" clauses
+    alias_pattern = re.compile(r'\bFROM\s+(\[?[a-zA-Z_][\w]*\]?\.?\[?{}\]?)(\s+AS\s+\w+|\s+\w+)?\b|JOIN\s+(\[?[a-zA-Z_][\w]*\]?\.?\[?{}\]?)(\s+AS\s+\w+|\s+\w+)?\b'.format(re.escape(table_name), re.escape(table_name)), re.IGNORECASE)
+    aliases = {table_name.lower()}
+
+    for alias_match in alias_pattern.finditer(tsql_script):
+        if alias_match.group(2):  # Alias found after "AS" or space
+            alias = alias_match.group(2).strip().split()[-1].lower()
+            aliases.add(alias)
+        elif alias_match.group(4):  # Alias found after "AS" or space in JOIN
+            alias = alias_match.group(4).strip().split()[-1].lower()
+            aliases.add(alias)
+
+    # Check each match and handle alias cases
+    for match in pattern.finditer(tsql_script):
+        operation = match.group(1).upper()
+        table_part = match.group(2)
+        alias_part = match.group(3)
+        table_full_name = (table_part + table_name).lower()
+
+        # If the table part or alias part matches the table name or its alias, it's a valid match
+        if table_full_name in aliases or (alias_part and alias_part.strip().lower() in aliases):
+            start = match.start()
+            end = match.end()
+            surrounding_text = get_surrounding_text(tsql_script, start, end, 50)
+            data.append({
+                'search_term': table_name,
+                'occurrence': len(data) + 1,  # Incremental occurrence number
+                'sql_keyword': operation,
+                'surrounding_text': surrounding_text
+            })
+
+    return pd.DataFrame(data)
+
+def get_surrounding_text(text, start, end, word_count):
+    words = text.split()
+    word_positions = []
+    pos = 0
+    for i, word in enumerate(words):
+        start_idx = text.find(word, pos)
+        end_idx = start_idx + len(word)
+        word_positions.append((start_idx, end_idx))
+        pos = end_idx
+
+    start_word = max(0, next(i for i, pos in enumerate(word_positions) if pos[0] >= start) - word_count)
+    end_word = min(len(words), next(i for i, pos in enumerate(word_positions) if pos[1] >= end) + word_count)
+
+    surrounding_text = ' '.join(words[start_word:end_word])
+    return surrounding_text
+
+# Example usage
+tsql_script = """
+CREATE PROCEDURE SampleProcedure
+AS
+BEGIN
+    -- This is a comment line
+    INSERT INTO dbo.MyTable (Column1, Column2)
+    SELECT Column1, Column2
+    FROM AnotherTable
+    JOIN dbo.MyTable t ON AnotherTable.ID = t.ID
+    DELETE FROM [dbo].[MyTable]
+    UPDATE MyTable
+    SET Column1 = 'NewValue'
+    WHERE Column2 = 'SomeValue'
+    TRUNCATE TABLE [dbo].MyTable
+    SELECT * FROM dbo.AnotherTable
+    UPDATE t SET t.ID = '1' FROM MyTable t
+END
+"""
+
+table_name = 'MyTable'
+
+results = find_table_operations(tsql_script, table_name)
+print(results)
+
+
+
+**************************************************************************************************************************************************************
+
+
+
