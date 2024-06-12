@@ -2,24 +2,52 @@ import dask.dataframe as dd
 import pandas as pd
 import numpy as np
 from prettytable import PrettyTable
-  
+
 # Generate sample data for 20 columns and 1000 rows
-num_rows = 1000
-num_cols = 20
+num_rows = 100
+num_cols_df1 = 8
+num_cols_df2 = 5
 
-data1 = {
-    f'col{i}': np.random.choice(['A', 'B', 'C', 'D'], num_rows) for i in range(num_cols)
-}
-data1['id'] = range(num_rows)  # Adding an 'id' column for joining
+# Ensure some overlap and differences in the data
+common_ids = int(num_rows * 0.7)
+only_in_df1_ids = num_rows - common_ids
+only_in_df2_ids = num_rows - common_ids
 
-data2 = {
-    f'col{i}': np.random.choice(['A', 'B', 'C', 'E'], num_rows) for i in range(num_cols)
+# Create common data for both dataframes
+common_data1 = {
+    f'col{i}': np.random.choice(['A', 'B', 'C', 'D'], common_ids) for i in range(num_cols_df1)
 }
-data2['id'] = range(num_rows)  # Adding an 'id' column for joining
+common_data2 = {
+    f'col{i}': np.random.choice(['A', 'B', 'C', 'E'], common_ids) for i in range(num_cols_df2)
+}
+common_data1['id'] = range(common_ids)
+common_data2['id'] = range(common_ids)
+
+# Create data only in df1
+data1_only = {
+    f'col{i}': np.random.choice(['A', 'D'], only_in_df1_ids) for i in range(num_cols_df1)
+}
+data1_only['id'] = range(common_ids, common_ids + only_in_df1_ids)
+
+# Create data only in df2
+data2_only = {
+    f'col{i}': np.random.choice(['A', 'G', 'E'], only_in_df2_ids) for i in range(num_cols_df2)
+}
+data2_only['id'] = range(common_ids, common_ids + only_in_df2_ids)
+
+# Combine data to create final dataframes
+data1 = {key: np.concatenate([common_data1[key], data1_only[key]]) for key in common_data1}
+data2 = {key: np.concatenate([common_data2[key], data2_only[key]]) for key in common_data2}
 
 # Create pandas dataframes
 df1 = pd.DataFrame(data1)
 df2 = pd.DataFrame(data2)
+
+# Introduce some mismatched values in common columns
+mismatch_indices = np.random.choice(common_ids, size=int(common_ids * 0.1), replace=False)
+for col in df1.columns:
+    if col in df2.columns and col != 'id':
+        df2.loc[mismatch_indices, col] = df2[col].apply(lambda x: 'X' if x != 'X' else 'Y')
 
 # Convert pandas dataframes to Dask dataframes
 ddf1 = dd.from_pandas(df1, npartitions=10)
@@ -61,67 +89,125 @@ def compare_dataframes(ddf1, ddf2, join_columns):
 differences = compare_dataframes(ddf1, ddf2, ['id'])
 
 
-# Perform comparison
-differences = compare_dataframes(ddf1, ddf2, ['id'])
-
-
-
-def generate_report(df1, df2, differences, sample_rows=None):
+def generate_report(df1, df2, differences, sample_rows=None, mismatch_sample=None):
     report = []
 
+    def add_section(title, table):
+        # report.append(f"{'__'*10}")
+        report.append(title)
+        report.append(table.get_string())
+        report.append(f"{'=='*60}\n")
+
     # DataFrame information
-    report.append("DataFrame Information:\n")
-    report.append("DataFrame 1:")
-    report.append(df1.dtypes.to_string())
-    report.append("\n\nDataFrame 2:")
-    report.append(df2.dtypes.to_string())
-    report.append("\n")
+    info_table = PrettyTable()
+    info_table.field_names = ["DataFrame 1 Column", "DataFrame 1 Type", "DataFrame 2 Column", "DataFrame 2 Type"]
+    
+    df1_cols = df1.dtypes.reset_index()
+    df2_cols = df2.dtypes.reset_index()
+    
+    max_len = max(len(df1_cols), len(df2_cols))
+    
+    for i in range(max_len):
+        row = []
+        if i < len(df1_cols):
+            row.extend([df1_cols.iloc[i, 0], df1_cols.iloc[i, 1]])
+        else:
+            row.extend(["", ""])
+        
+        if i < len(df2_cols):
+            row.extend([df2_cols.iloc[i, 0], df2_cols.iloc[i, 1]])
+        else:
+            row.extend(["", ""])
+        
+        info_table.add_row(row)
+    
+    add_section("DataFrame Information", info_table)
+
+    # Columns in df1 but not in df2
+    only_in_df1_cols = set(df1.columns) - set(df2.columns)
+    only_in_df1_cols_table = PrettyTable()
+    only_in_df1_cols_table.field_names = ["Columns in DataFrame 1 but not in DataFrame 2"]
+    for col in only_in_df1_cols:
+        only_in_df1_cols_table.add_row([col])
+    add_section("Columns Mismatch Summary", only_in_df1_cols_table)
+
+    # Columns in df2 but not in df2
+    only_in_df2_cols = set(df2.columns) - set(df1.columns)
+    only_in_df2_cols_table = PrettyTable()
+    only_in_df2_cols_table.field_names = ["Columns in DataFrame 2 but not in DataFrame 1"]
+    for col in only_in_df2_cols:
+        only_in_df2_cols_table.add_row([col])
+    add_section("Columns Mismatch Summary", only_in_df2_cols_table)
 
     # DataFrame summary
-    report.append("DataFrame Summary:\n")
-    report.append(f"DataFrame 1: {len(df1)} rows, {len(df1.columns)} columns")
-    report.append(f"DataFrame 2: {len(df2)} rows, {len(df2.columns)} columns")
-    report.append("\n")
+    summary_table = PrettyTable()
+    summary_table.field_names = ["DataFrame", "Rows", "Columns"]
+    summary_table.add_row(["DataFrame 1", len(df1), len(df1.columns)])
+    summary_table.add_row(["DataFrame 2", len(df2), len(df2.columns)])
+    add_section("DataFrame Summary", summary_table)
     
     # Rows only in df1
-    report.append("Rows only in df1:")
-    report.append(differences['only_in_df1'].to_string(index=False))
-    report.append("\n")
-    
+    only_in_df1_table = PrettyTable()
+    only_in_df1_table.field_names = df1.columns
+    for row in differences['only_in_df1'].itertuples(index=False):
+        only_in_df1_table.add_row(row)
+    add_section("Rows only in DataFrame 1", only_in_df1_table)
+
     # Rows only in df2
-    report.append("Rows only in df2:")
-    report.append(differences['only_in_df2'].to_string(index=False))
-    report.append("\n")
+    only_in_df2_table = PrettyTable()
+    only_in_df2_table.field_names = df2.columns
+    for row in differences['only_in_df2'].itertuples(index=False):
+        only_in_df2_table.add_row(row)
+    add_section("Rows only in DataFrame 2", only_in_df2_table)
     
     # Mismatched rows column-wise
-    report.append("Column-wise Mismatched Rows:")
+    mismatch_table = PrettyTable()
     mismatched = differences['mismatched_rows']
-    
+
     for col in mismatched.filter(like='_df1').columns:
         col_name = col.replace('_df1', '')
-        report.append(f"Column {col_name} Mismatches:")
+        mismatch_table.field_names = ["ID", "Column", "Row", "DataFrame 1", "DataFrame 2"]
+        mismatch_rows = 0
+        
         for index, row in mismatched.iterrows():
             val1 = row[col]
             val2 = row[col.replace('_df1', '_df2')]
             if val1 != val2:
-                report.append(f"Row {index}: df1={val1}, df2={val2}")
-        report.append("\n")
+                mismatch_table.add_row([row['id'], col_name, index, val1, val2])
+                mismatch_rows += 1
+                if mismatch_sample and mismatch_rows >= mismatch_sample:
+                    break
+        add_section(f"Column {col_name} Mismatches", mismatch_table)
+        mismatch_table.clear_rows()
 
     # Sample mismatched rows
-    report.append("Sample Mismatched Rows:")
+    sample_table_df1 = PrettyTable()
+    sample_table_df1.field_names = ["ID"] + [f"DataFrame 1 ({col})" for col in df1.columns]
+    sample_table_df2 = PrettyTable()
+    sample_table_df2.field_names = ["ID"] + [f"DataFrame 2 ({col})" for col in df2.columns]
+    
     if sample_rows:
         sample_mismatched = mismatched.head(sample_rows)
     else:
         sample_mismatched = mismatched
-    report.append("From DataFrame 1:")
-    report.append(sample_mismatched.filter(like='_df1').to_string(index=False))
-    report.append("\nFrom DataFrame 2:")
-    report.append(sample_mismatched.filter(like='_df2').to_string(index=False))
+
+    for row in sample_mismatched.itertuples(index=False):
+        sample_table_df1.add_row([row.id] + list(row[:len(df1.columns)]))
+        sample_table_df2.add_row([row.id] + list(row[len(df1.columns):len(df1.columns) * 2]))
+    
+    add_section("Sample Mismatched Rows from DataFrame 1", sample_table_df1)
+    add_section("Sample Mismatched Rows from DataFrame 2", sample_table_df2)
 
     return "\n".join(report)
 
 # Perform comparison
 differences = compare_dataframes(ddf1, ddf2, ['id'])
 
-# Generate report with sample rows
-report = generate_report(df1, df2, differences, sample_rows=10)
+# Generate report with sample rows and mismatched row limits
+report = generate_report(df1, df2, differences, sample_rows=10, mismatch_sample=5)
+
+print(report)
+
+
+with open("report.txt", "w") as f:
+    f.write(report)
