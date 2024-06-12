@@ -1,0 +1,127 @@
+import dask.dataframe as dd
+import pandas as pd
+import numpy as np
+from prettytable import PrettyTable
+  
+# Generate sample data for 20 columns and 1000 rows
+num_rows = 1000
+num_cols = 20
+
+data1 = {
+    f'col{i}': np.random.choice(['A', 'B', 'C', 'D'], num_rows) for i in range(num_cols)
+}
+data1['id'] = range(num_rows)  # Adding an 'id' column for joining
+
+data2 = {
+    f'col{i}': np.random.choice(['A', 'B', 'C', 'E'], num_rows) for i in range(num_cols)
+}
+data2['id'] = range(num_rows)  # Adding an 'id' column for joining
+
+# Create pandas dataframes
+df1 = pd.DataFrame(data1)
+df2 = pd.DataFrame(data2)
+
+# Convert pandas dataframes to Dask dataframes
+ddf1 = dd.from_pandas(df1, npartitions=10)
+ddf2 = dd.from_pandas(df2, npartitions=10)
+
+# Display the first few rows of each dataframe
+# print("DataFrame 1:")
+# print(df1.head())
+# print("\nDataFrame 2:")
+# print(df2.head())
+
+
+
+def compare_dataframes(ddf1, ddf2, join_columns):
+    # Perform a join on the specified columns
+    merged = ddf1.merge(ddf2, on=join_columns, suffixes=('_df1', '_df2'), how='outer', indicator=True)
+    
+    # Compute the merged dataframe
+    merged = merged.compute()
+    
+    # Identify differences
+    only_in_df1 = merged[merged['_merge'] == 'left_only']
+    only_in_df2 = merged[merged['_merge'] == 'right_only']
+    both = merged[merged['_merge'] == 'both']
+    
+    differences = {}
+    differences['only_in_df1'] = only_in_df1
+    differences['only_in_df2'] = only_in_df2
+    
+    # Compare column values for rows that exist in both dataframes
+    # mismatched_rows = both[both.filter(like='_df1').ne(both.filter(like='_df2')).any(axis=1)]
+    mismatched_rows = both[both.filter(like='_df1').astype(str).ne(both.filter(like='_df2').astype(str)).any(axis=1)]
+    
+    differences['mismatched_rows'] = mismatched_rows
+    
+    return differences
+
+# Perform comparison
+differences = compare_dataframes(ddf1, ddf2, ['id'])
+
+
+# Perform comparison
+differences = compare_dataframes(ddf1, ddf2, ['id'])
+
+
+
+def generate_report(df1, df2, differences, sample_rows=None):
+    report = []
+
+    # DataFrame information
+    report.append("DataFrame Information:\n")
+    report.append("DataFrame 1:")
+    report.append(df1.dtypes.to_string())
+    report.append("\n\nDataFrame 2:")
+    report.append(df2.dtypes.to_string())
+    report.append("\n")
+
+    # DataFrame summary
+    report.append("DataFrame Summary:\n")
+    report.append(f"DataFrame 1: {len(df1)} rows, {len(df1.columns)} columns")
+    report.append(f"DataFrame 2: {len(df2)} rows, {len(df2.columns)} columns")
+    report.append("\n")
+    
+    # Rows only in df1
+    report.append("Rows only in df1:")
+    report.append(differences['only_in_df1'].to_string(index=False))
+    report.append("\n")
+    
+    # Rows only in df2
+    report.append("Rows only in df2:")
+    report.append(differences['only_in_df2'].to_string(index=False))
+    report.append("\n")
+    
+    # Mismatched rows column-wise
+    report.append("Column-wise Mismatched Rows:")
+    mismatched = differences['mismatched_rows']
+    
+    for col in mismatched.filter(like='_df1').columns:
+        col_name = col.replace('_df1', '')
+        report.append(f"Column {col_name} Mismatches:")
+        for index, row in mismatched.iterrows():
+            val1 = row[col]
+            val2 = row[col.replace('_df1', '_df2')]
+            if val1 != val2:
+                report.append(f"Row {index}: df1={val1}, df2={val2}")
+        report.append("\n")
+
+    # Sample mismatched rows
+    report.append("Sample Mismatched Rows:")
+    if sample_rows:
+        sample_mismatched = mismatched.head(sample_rows)
+    else:
+        sample_mismatched = mismatched
+    report.append("From DataFrame 1:")
+    report.append(sample_mismatched.filter(like='_df1').to_string(index=False))
+    report.append("\nFrom DataFrame 2:")
+    report.append(sample_mismatched.filter(like='_df2').to_string(index=False))
+
+    return "\n".join(report)
+
+# Perform comparison
+differences = compare_dataframes(ddf1, ddf2, ['id'])
+
+# Generate report with sample rows
+report = generate_report(df1, df2, differences, sample_rows=10)
