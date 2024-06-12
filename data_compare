@@ -7,7 +7,7 @@ import datetime
 # Generate sample data for 20 columns and 1000 rows
 num_rows = 100
 num_cols_df1 = 8
-num_cols_df2 = 5
+num_cols_df2 = 6
 
 # Ensure some overlap and differences in the data
 common_ids = int(num_rows * 0.7)
@@ -54,11 +54,16 @@ for col in df1.columns:
 ddf1 = dd.from_pandas(df1, npartitions=10)
 ddf2 = dd.from_pandas(df2, npartitions=10)
 
+# Update 'id' to 101 where 'id' is 1
+ddf1 = ddf1.assign(id=ddf1['id'].mask(ddf1['id'] == 1, 101))
+
 # Display the first few rows of each dataframe
 # print("DataFrame 1:")
 # print(df1.head())
 # print("\nDataFrame 2:")
 # print(df2.head())
+
+
 
 def compare_dataframes(ddf1, ddf2, join_columns):
     # Perform a join on the specified columns
@@ -77,15 +82,11 @@ def compare_dataframes(ddf1, ddf2, join_columns):
     differences['only_in_df2'] = only_in_df2
 
     # Compare column values for rows that exist in both dataframes
-    # mismatched_rows = both[both.filter(like='_df1').ne(both.filter(like='_df2')).any(axis=1)]
     mismatched_rows = both[both.filter(like='_df1').astype(str).ne(both.filter(like='_df2').astype(str)).any(axis=1)]
 
     differences['mismatched_rows'] = mismatched_rows
 
     return differences
-
-# Perform comparison
-differences = compare_dataframes(ddf1, ddf2, ['id'])
 
 
 def generate_report(df1, df2, differences, join_column, sample_rows=None, mismatch_sample=None):
@@ -157,14 +158,14 @@ def generate_report(df1, df2, differences, join_column, sample_rows=None, mismat
     
     # Rows only in df1
     only_in_df1_table = PrettyTable()
-    only_in_df1_table.field_names = df1.columns
+    only_in_df1_table.field_names = differences['only_in_df1'].columns 
     for row in differences['only_in_df1'].itertuples(index=False):
         only_in_df1_table.add_row(row)
     add_section("Rows only in DataFrame 1", only_in_df1_table)
 
     # Rows only in df2
     only_in_df2_table = PrettyTable()
-    only_in_df2_table.field_names = df2.columns
+    only_in_df2_table.field_names = differences['only_in_df2'].columns 
     for row in differences['only_in_df2'].itertuples(index=False):
         only_in_df2_table.add_row(row)
     add_section("Rows only in DataFrame 2", only_in_df2_table)
