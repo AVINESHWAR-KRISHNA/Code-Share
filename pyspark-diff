@@ -19,11 +19,15 @@ def compare_dataframes(spark_df1, spark_df2, join_columns):
     only_in_df2 = merged.filter(merged["_merge"] == "right_only")
     both = merged.filter(merged["_merge"] == "both")
 
-    # Compare column values for rows that exist in both DataFrames
-    condition = False
+    # Create a condition for mismatched rows
+    condition = None
     for col_name in spark_df1.columns:
         if col_name not in join_columns:
-            condition = condition | (col("df1." + col_name) != col("df2." + col_name))
+            col_condition = (col("df1." + col_name) != col("df2." + col_name))
+            if condition is None:
+                condition = col_condition
+            else:
+                condition = condition | col_condition
 
     mismatched_rows = both.filter(condition)
 
