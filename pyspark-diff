@@ -1,0 +1,58 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import lit, when, col
+
+# Initialize Spark session
+spark = SparkSession.builder.appName("DataFrameComparison").getOrCreate()
+
+def compare_dataframes(spark_df1, spark_df2, join_columns):
+    # Perform a full outer join on the specified columns
+    merged = spark_df1.alias("df1").join(spark_df2.alias("df2"), on=join_columns, how="outer")
+    
+    # Add an indicator column to show the source of the rows
+    merged = merged.withColumn("_merge",
+                               when(spark_df1[join_columns[0]].isNull(), lit("right_only"))
+                               .when(spark_df2[join_columns[0]].isNull(), lit("left_only"))
+                               .otherwise(lit("both")))
+
+    # Identify rows only in each DataFrame
+    only_in_df1 = merged.filter(merged["_merge"] == "left_only")
+    only_in_df2 = merged.filter(merged["_merge"] == "right_only")
+    both = merged.filter(merged["_merge"] == "both")
+
+    # Compare column values for rows that exist in both DataFrames
+    condition = False
+    for col_name in spark_df1.columns:
+        if col_name not in join_columns:
+            condition = condition | (col("df1." + col_name) != col("df2." + col_name))
+
+    mismatched_rows = both.filter(condition)
+
+    differences = {}
+    differences['only_in_df1'] = only_in_df1
+    differences['only_in_df2'] = only_in_df2
+    differences['mismatched_rows'] = mismatched_rows
+
+    return differences
+
+# Example usage
+data1 = [(1, "foo", 100), (2, "bar", 200), (3, "baz", 300)]
+columns1 = ["id", "value", "amount"]
+spark_df1 = spark.createDataFrame(data1, columns1)
+
+data2 = [(1, "foo", 100), (2, "bar", 250), (4, "qux", 400)]
+columns2 = ["id", "value", "amount"]
+spark_df2 = spark.createDataFrame(data2, columns2)
+
+# Compare DataFrames
+join_columns = ["id"]
+differences = compare_dataframes(spark_df1, spark_df2, join_columns)
+
+# Show the differences
+print("Only in df1:")
+differences['only_in_df1'].show()
+
+print("Only in df2:")
+differences['only_in_df2'].show()
+
+print("Mismatched rows:")
+differences['mismatched_rows'].show()
