@@ -16,7 +16,7 @@ es.login_name
 
 FROM
 sys.dm_tran_locks AS tl
-INNER JOIN sys.dm_exec_sessions AS es ON tl.request session id = es.session id
+INNER JOIN sys.dm_exec_sessions AS es ON tl.request_session_id = es.session_id
 
 WHERE
 tl.resource_associated_entity_id = OBJECT_ID('TableName')
