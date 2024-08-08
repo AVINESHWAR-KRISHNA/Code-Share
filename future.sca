@@ -12,11 +12,11 @@ val numberOfThreads = 10
 // Create a fixed thread pool
 val threadPool = Executors.newFixedThreadPool(numberOfThreads)
 
-// Implicit execution context from the thread pool
+// Explicit execution context from the thread pool
 implicit val executionContext: ExecutionContext = ExecutionContext.fromExecutor(threadPool)
 
 // Define the task function to run a notebook
-def task(arguments: Map[String, String]): Future[Unit] = Future {
+def task(arguments: Map[String, String])(implicit ec: ExecutionContext): Future[Unit] = Future {
   try {
     println("Running task")
     
@@ -46,7 +46,7 @@ val argumentsList = List(
 )
 
 // Create a list of tasks
-val tasks = argumentsList.map(task)
+val tasks = argumentsList.map(args => task(args))
 
 // Combine the futures into a single future and wait for all to complete
 val resultFuture: Future[List[Unit]] = Future.sequence(tasks)
