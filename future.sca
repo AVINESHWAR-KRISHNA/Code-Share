@@ -1,64 +1,58 @@
-import scala.concurrent._
+import java.util.concurrent.{Executors, TimeUnit}
+import scala.concurrent.{ExecutionContext, Future, blocking}
 import scala.concurrent.duration._
-import scala.util.{Failure, Success}
-import java.util.concurrent.Executors
-import org.json4s._
-import org.json4s.jackson.JsonMethods._
-import org.json4s.jackson.Serialization.read
+import scala.util.{Failure, Success, Try}
 
-// Define the number of threads to use
-val numberOfThreads = 10
-
-// Create a fixed thread pool
+val notebookContext = dbutils.notebook.getContext()
+val numberOfThreads = 5
 val threadPool = Executors.newFixedThreadPool(numberOfThreads)
-
-// Explicit execution context from the thread pool
 implicit val executionContext: ExecutionContext = ExecutionContext.fromExecutor(threadPool)
 
-// Define the task function to run a notebook
-def task(arguments: Map[String, String])(implicit ec: ExecutionContext): Future[Unit] = Future {
-  try {
-    println("Running task")
-    
-    // Run the notebook synchronously
-    val res = dbutils.notebook.run("/ODS_Ingestion/Level_0.1", 60, arguments)
-    println(s"Notebook result: $res")
-    
-    // Parse the result into a JSON object
-    val json = parse(res)
-    val extractedMap = json.extract[Map[String, String]]
-    
-    // Print the extracted key-value pairs
-    extractedMap.foreach { case (key, value) =>
-      println(s"Key: $key, Value: $value")
-    }
-  } catch {
-    case e: Exception => println(s"An error occurred: ${e.getMessage}")
+val parametersList: List[Map[String, String]] = List(
+  arguments, arguments, arguments, arguments, arguments
+)
+
+def runNotebook(params: Map[String, String]): Future[String] = Future {
+  dbutils.notebook.setContext(notebookContext)
+  Try {
+    dbutils.notebook.run("./ODS_Ingestion/Level_0_1", 60, params)
+  } match {
+    case Success(result) => result
+    case Failure(ex) =>
+      println(s"An error occurred: ${ex.getMessage}")
+      "Error"
   }
 }
 
-// List of arguments to be passed to the notebooks
-val argumentsList = List(
-  Map("param1" -> "value1"),
-  Map("param1" -> "value2"),
-  Map("param1" -> "value3"),
-  Map("param1" -> "value4")
-)
-
-// Create a list of tasks
-val tasks = argumentsList.map(args => task(args))
-
-// Combine the futures into a single future and wait for all to complete
-val resultFuture: Future[List[Unit]] = Future.sequence(tasks)
-
-// Handling the results or errors
-resultFuture.onComplete {
-  case Success(_) => println("All tasks completed successfully")
-  case Failure(ex) => println(s"One or more tasks failed with error: ${ex.getMessage}")
+def runWithRetry(params: Map[String, String], retries: Int = 3): Future[String] = {
+  runNotebook(params).recoverWith {
+    case _ if retries > 0 =>
+      println(s"Retrying... attempts remaining: $retries")
+      runWithRetry(params, retries - 1)
+  }
 }
 
-// Await the results to ensure all tasks complete
-Await.result(resultFuture, Duration.Inf)
+val futures: List[Future[String]] = parametersList.map { params =>
+  runWithRetry(params)
+}
 
-// Properly shutdown the thread pool
-threadPool.shutdown()
+val allResults: Future[List[String]] = Future.sequence(futures)
+
+allResults.onComplete {
+  case Success(results) =>
+    println("All tasks completed successfully")
+    results.foreach(println)
+  case Failure(ex) =>
+    println(s"One or more tasks failed with error: ${ex.getMessage}")
+}
+
+try {
+  blocking {
+    Await.result(allResults, Duration.Inf)
+  }
+} finally {
+  threadPool.shutdown()
+  if (!threadPool.awaitTermination(1, TimeUnit.MINUTES)) {
+    threadPool.shutdownNow()
+  }
+}
