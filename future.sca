@@ -56,3 +56,71 @@ try {
     threadPool.shutdownNow()
   }
 }
+
+
+
+
+
+//////
+
+
+
+import scala.concurrent.{ExecutionContext, Future, blocking}
+import scala.concurrent.duration._
+import scala.util.{Failure, Success, Try}
+import scala.util.Random
+
+def retryWithBackoff[T](
+    block: => Future[T],
+    maxRetries: Int,
+    initialDelay: FiniteDuration,
+    maxDelay: FiniteDuration,
+    jitter: Double = 0.2,
+    maxTotalDuration: FiniteDuration
+)(implicit ec: ExecutionContext): Future[T] = {
+
+  def exponentialBackoff(attempt: Int): FiniteDuration = {
+    val delay = initialDelay * math.pow(2, attempt).min(maxDelay.toMillis).toLong
+    val jitteredDelay = delay * (1 + (Random.nextDouble() * jitter))
+    FiniteDuration(jitteredDelay.toLong, MILLISECONDS)
+  }
+
+  def retry(attempt: Int, totalTime: FiniteDuration): Future[T] = {
+    block.recoverWith {
+      case ex if attempt < maxRetries && totalTime < maxTotalDuration =>
+        val delay = exponentialBackoff(attempt)
+        val newTotalTime = totalTime + delay
+
+        println(s"Retrying in ${delay.toMillis} ms (Attempt: $attempt, Total Time: ${newTotalTime.toMillis} ms, Error: ${ex.getMessage})")
+
+        blocking(Thread.sleep(delay.toMillis)) // Delay before retry
+        retry(attempt + 1, newTotalTime)
+    }
+  }
+
+  retry(0, Duration.Zero)
+}
+
+// Usage Example
+val notebookContext = dbutils.notebook.getContext()
+val params = Map("param1" -> "value1")
+
+def runNotebook(params: Map[String, String]): Future[String] = Future {
+  dbutils.notebook.setContext(notebookContext)
+  dbutils.notebook.run("./ODS_Ingestion/Level_0_1", 60, params)
+}
+
+implicit val executionContext: ExecutionContext = ExecutionContext.global
+
+val result = retryWithBackoff(
+  block = runNotebook(params),
+  maxRetries = 5,
+  initialDelay = 1.second,
+  maxDelay = 1.minute,
+  maxTotalDuration = 10.minutes
+)
+
+result.onComplete {
+  case Success(res) => println(s"Notebook completed successfully: $res")
+  case Failure(ex)  => println(s"Notebook failed after retries: ${ex.getMessage}")
+}
