@@ -1,11 +1,8 @@
 import asyncio
-from sqlalchemy import create_engine, MetaData, Table, select, text, inspect, insert
+from sqlalchemy import create_engine, MetaData, Table, select, text, inspect
 from sqlalchemy.dialects.mssql import insert as mssql_insert
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.future import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.sql import func
-from concurrent.futures import ThreadPoolExecutor
 
 # Configuration Parameters
 source_conn_str = "mssql+pyodbc://<username>:<password>@<source_server>/<source_db>?driver=ODBC+Driver+17+for+SQL+Server"
@@ -15,6 +12,7 @@ dest_table_name = '<dest_table>'
 columns_to_read = ['id', 'column1', 'column2']  # List of columns to read from source
 filter_clause = 'WHERE column1 > 1000'   # Example filter
 partition_column = 'id'  # Use 'id' or 'timestamp' for partitioning
+default_values = {'new_column1': 'default_value', 'new_column2': 100}  # Additional columns with default values
 
 # Async engine and session setup
 source_engine = create_async_engine(source_conn_str, echo=True, pool_size=10, max_overflow=20)
@@ -31,12 +29,16 @@ async def fetch_column_types(engine, table_name, columns):
 # Asynchronous bulk upsert operation
 async def bulk_upsert(session, dest_table, data):
     try:
+        # Add default values to the data
+        for row in data:
+            row.update(default_values)
+        
         # Perform upsert operation
         stmt = mssql_insert(dest_table).values(data)
         # Define the update on conflict condition
         upsert_stmt = stmt.on_conflict_do_update(
             index_elements=['id'],  # Assuming 'id' is the unique constraint
-            set_={c.key: c for c in stmt.excluded if c.key != 'id'}
+            set_={c.key: c for c in stmt.excluded if c.key not in ['id']}  # Exclude the index column from updates
         )
         await session.execute(upsert_stmt)
         await session.commit()
@@ -44,18 +46,13 @@ async def bulk_upsert(session, dest_table, data):
         await session.rollback()
         print(f"Error in upsert operation: {e}")
 
-# Parallel data read using partitioning
-async def partition_data_read(engine, table, columns, partition_column, partition_value):
+# Asynchronous function to read partitions and process them
+async def read_and_process_partition(engine, source_table, columns, partition_column, partition_value):
     async with engine.connect() as conn:
-        query = select([table]).where(text(f"{partition_column} = :value")).params(value=partition_value)
+        query = select([source_table]).where(text(f"{partition_column} = :value")).params(value=partition_value)
         result = await conn.execute(query)
-        return [dict(row) for row in result.fetchall()]
-
-# Asynchronous processing function
-async def process_data_partitions(partitions):
-    async with AsyncSessionLocal() as session:
-        tasks = [bulk_upsert(session, dest_table, partition) for partition in partitions]
-        await asyncio.gather(*tasks)
+        data = [dict(row) for row in result.fetchall()]
+        return data
 
 # Main Execution
 async def main():
@@ -68,12 +65,23 @@ async def main():
     # Fetch column types dynamically
     column_types = await fetch_column_types(source_engine, source_table_name, columns_to_read)
     
-    # Partition data read using asyncio and ThreadPoolExecutor
+    # Define partition values (e.g., ranges or specific values)
     partition_values = range(1, 11)  # Example partition range
-    partitions = await asyncio.gather(*[partition_data_read(source_engine, source_table, columns_to_read, partition_column, value) for value in partition_values])
 
-    # Process partitions asynchronously
-    await process_data_partitions(partitions)
+    # Asynchronous read and processing
+    async with AsyncSessionLocal() as session:
+        # Schedule partition reads concurrently
+        tasks = [
+            read_and_process_partition(source_engine, source_table, columns_to_read, partition_column, value)
+            for value in partition_values
+        ]
+        
+        # Fetch all partitions concurrently
+        partitions = await asyncio.gather(*tasks)
+        
+        # Upsert partitions concurrently
+        upsert_tasks = [bulk_upsert(session, dest_table, partition) for partition in partitions]
+        await asyncio.gather(*upsert_tasks)
 
 # Run the main function
 if __name__ == "__main__":
