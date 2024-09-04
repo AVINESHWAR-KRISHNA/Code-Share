@@ -21,7 +21,7 @@ Example configuration file (config/logger_settings.toml):
 [logger]
 default_level_file = "INFO"           # Log level for the file
 default_level_console = "WARN"        # Log level for the console
-format = "%(asctime)s - %(name)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s"
+format = "%(asctime)s - %(name)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s - PID: %(process)d - TID: %(thread)d"
 datefmt = "%Y-%m-%d %H:%M:%S"
 log_dir = "LOGs"                      # Directory where log files are stored
 retention_days = 30                   # Number of days to retain log files
@@ -30,6 +30,9 @@ backup_count = 5                      # Number of backup files to keep
 
 Example usage:
 --------------
+>>> import logging
+>>> from logger_module import setup_logger
+
 >>> logger = setup_logger()
 >>> logger.info("Logger setup complete.")
 >>> logger.error("This is an error message.")
@@ -61,6 +64,14 @@ def validate_log_level(level):
 
     Returns:
         str: Valid log level or 'INFO' as default.
+
+    Doctest:
+    >>> validate_log_level('info')
+    'INFO'
+    >>> validate_log_level('debug')
+    'DEBUG'
+    >>> validate_log_level('invalid')
+    'INFO'
     """
     return level.upper() if level.upper() in VALID_LOG_LEVELS else 'INFO'
 
@@ -73,6 +84,11 @@ def load_logger_config(config_path='config/logger_settings.toml'):
 
     Returns:
         dict: Configuration settings as a dictionary.
+
+    Doctest:
+    >>> config = load_logger_config('config/logger_settings.toml')
+    >>> isinstance(config, dict)
+    True
     """
     try:
         with open(config_path, 'r') as file:
@@ -92,6 +108,12 @@ def setup_logger(log_file_name=None, config_path='config/logger_settings.toml'):
 
     Returns:
         logging.Logger: Configured logger instance.
+
+    Doctest:
+    >>> logger = setup_logger()
+    >>> logger.info("Logger setup complete.")
+    >>> logger.error("This is an error message.")
+    >>> logger.warning("This is a warning message.")
     """
     global _logger_instance
     if _logger_instance:
@@ -103,7 +125,7 @@ def setup_logger(log_file_name=None, config_path='config/logger_settings.toml'):
     log_dir = config.get('logger', {}).get('log_dir', 'LOGs')
     default_level_file = validate_log_level(config.get('logger', {}).get('default_level_file', 'INFO'))
     default_level_console = validate_log_level(config.get('logger', {}).get('default_level_console', 'WARN'))
-    log_format = config.get('logger', {}).get('format', '%(asctime)s - %(name)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s')
+    log_format = config.get('logger', {}).get('format', '%(asctime)s - %(name)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s - PID: %(process)d - TID: %(thread)d')
     date_format = config.get('logger', {}).get('datefmt', '%Y-%m-%d %H:%M:%S')
     retention_days = config.get('logger', {}).get('retention_days', 30)
     max_log_size_mb = config.get('logger', {}).get('max_log_size_mb', 10)
@@ -150,6 +172,7 @@ def setup_logger(log_file_name=None, config_path='config/logger_settings.toml'):
 
     # Set up graceful shutdown handling
     def handle_exit(sig, frame):
+        logger.info("Received shutdown signal, shutting down gracefully.")
         logging.shutdown()
         sys.exit(0)
 
